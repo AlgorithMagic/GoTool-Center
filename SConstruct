@@ -4,87 +4,120 @@ from pathlib import Path
 from SCons.Script import ARGUMENTS, Default, SConscript
 
 PROJECT_NAME = "gotool_center"
+
 ADDON_DIR = Path("addons") / "GoToolCenter"
 BIN_DIR = ADDON_DIR / "bin"
 
+GODOT_CPP_SCONSTRUCT = Path("godot-cpp") / "SConstruct"
+SQLITE_SOURCE = Path("third-party") / "sqlite3" / "sqlite3.c"
+EXTENSION_API_FILE = Path("third-party") / "godot" / "extension_api.json"
+
 platform = ARGUMENTS.get("platform", "")
-target = ARGUMENTS.get("target", "")
+build_target = ARGUMENTS.get("target", "")
 arch = ARGUMENTS.get("arch", "")
 
 if not platform:
     raise RuntimeError("Missing required SCons argument: platform=windows|linux|macos")
 
-if not target:
+if not build_target:
     raise RuntimeError("Missing required SCons argument: target=template_debug|template_release")
 
 if not arch:
     raise RuntimeError("Missing required SCons argument: arch=x86_64|arm64|universal")
 
-godot_cpp_sconstruct = Path("godot-cpp") / "SConstruct"
+if platform not in {"windows", "linux", "macos"}:
+    raise RuntimeError(f"Unsupported platform: {platform}")
 
-if not godot_cpp_sconstruct.is_file():
+if build_target not in {"template_debug", "template_release"}:
+    raise RuntimeError(f"Unsupported target: {build_target}")
+
+if not GODOT_CPP_SCONSTRUCT.is_file():
     raise RuntimeError(
         "Missing godot-cpp/SConstruct. "
         "Run: git submodule update --init --recursive"
     )
 
-env = SConscript(str(godot_cpp_sconstruct))
+if not SQLITE_SOURCE.is_file():
+    raise RuntimeError("Missing third-party/sqlite3/sqlite3.c")
+
+if not EXTENSION_API_FILE.is_file():
+    raise RuntimeError(
+        "Missing third-party/godot/extension_api.json. "
+        "Dump it with Godot using --dump-extension-api, then move it into third-party/godot/."
+    )
 
 BIN_DIR.mkdir(parents=True, exist_ok=True)
 
-env.Append(CPPPATH=[
+env = SConscript(str(GODOT_CPP_SCONSTRUCT))
+
+env.AppendUnique(CPPPATH=[
     "src",
     "third-party/sqlite3",
 ])
 
-env.Append(CPPDEFINES=[
+env.AppendUnique(CPPDEFINES=[
     "SQLITE_THREADSAFE=1",
     "SQLITE_OMIT_LOAD_EXTENSION",
 ])
 
 if platform == "windows":
-    env.Append(CXXFLAGS=[
+    env.AppendUnique(CXXFLAGS=[
         "/std:c++20",
         "/permissive-",
         "/EHsc",
     ])
-else:
-    env.Append(CXXFLAGS=[
+elif platform in {"linux", "macos"}:
+    env.AppendUnique(CXXFLAGS=[
         "-std=c++20",
         "-Wall",
         "-Wextra",
         "-Wpedantic",
     ])
 
-cpp_sources = [str(path) for path in Path("src").rglob("*.cpp")]
+cpp_sources = sorted(path.as_posix() for path in Path("src").rglob("*.cpp"))
 
 if not cpp_sources:
     raise RuntimeError("No C++ source files found under src/")
 
-sqlite_source = Path("third-party") / "sqlite3" / "sqlite3.c"
-
-if not sqlite_source.is_file():
-    raise RuntimeError("Missing third-party/sqlite3/sqlite3.c")
+object_dir = Path("build") / "scons" / platform / build_target / arch
+object_dir.mkdir(parents=True, exist_ok=True)
 
 sqlite_env = env.Clone()
 
 if platform == "windows":
-    sqlite_env.Append(CCFLAGS=[
+    sqlite_env.AppendUnique(CCFLAGS=[
         "/wd4090",
         "/wd4996",
     ])
-else:
-    sqlite_env.Append(CCFLAGS=[
+elif platform == "linux":
+    sqlite_env.AppendUnique(CCFLAGS=[
         "-Wno-discarded-qualifiers",
         "-Wno-unused-parameter",
         "-Wno-unused-variable",
     ])
+elif platform == "macos":
+    sqlite_env.AppendUnique(CCFLAGS=[
+        "-Wno-incompatible-pointer-types-discards-qualifiers",
+        "-Wno-unused-parameter",
+        "-Wno-unused-variable",
+    ])
 
-sqlite_objects = sqlite_env.Object(str(sqlite_source))
-
-library_target = str(
-    BIN_DIR / f"lib{PROJECT_NAME}{env['suffix']}{env['SHLIBSUFFIX']}"
+sqlite_objects = sqlite_env.SharedObject(
+    target=(object_dir / "sqlite3").as_posix(),
+    source=SQLITE_SOURCE.as_posix(),
 )
+
+if platform == "windows":
+    shared_library_extension = ".dll"
+elif platform == "linux":
+    shared_library_extension = ".so"
+elif platform == "macos":
+    shared_library_extension = ".dylib"
+else:
+    raise RuntimeError(f"Unsupported platform: {platform}")
+
+library_filename = f"lib{PROJECT_NAME}{env['suffix']}{shared_library_extension}"
+library_target = (BIN_DIR / library_filename).as_posix()
 
 library = env.SharedLibrary(
     target=library_target,
