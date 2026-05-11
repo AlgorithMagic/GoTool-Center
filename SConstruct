@@ -69,6 +69,7 @@ if platform == "windows":
 elif platform in {"linux", "macos"}:
     env.AppendUnique(CXXFLAGS=[
         "-std=c++20",
+        "-fexceptions",
         "-Wall",
         "-Wextra",
         "-Wpedantic",

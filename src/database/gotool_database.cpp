@@ -1,12 +1,15 @@
 #include "gotool_database.hpp"
 
+#include <cstdint>
+#include <stdexcept>
+#include <string>
 #include <utility>
 
 namespace gotool::database {
 
 namespace {
 
-void throw_sqlite_error(sqlite3 *db, const std::string &context, int code = SQLITE_ERROR) {
+[[noreturn]] void throw_sqlite_error(sqlite3 *db, const std::string &context, int code = SQLITE_ERROR) {
     const std::string message =
         db != nullptr
             ? sqlite3_errmsg(db)
@@ -51,6 +54,7 @@ Statement::~Statement() noexcept {
 Statement::Statement(Statement &&other) noexcept {
     db_ = other.db_;
     stmt_ = other.stmt_;
+
     other.db_ = nullptr;
     other.stmt_ = nullptr;
 }
@@ -66,8 +70,10 @@ Statement &Statement::operator=(Statement &&other) noexcept {
 
     db_ = other.db_;
     stmt_ = other.stmt_;
+
     other.db_ = nullptr;
     other.stmt_ = nullptr;
+
     return *this;
 }
 
@@ -84,6 +90,7 @@ void Statement::bind_text(int index, const std::string &value) {
         static_cast<int>(value.size()),
         SQLITE_TRANSIENT
     );
+
     ensure_sqlite_ok(db_, code, "Failed to bind sqlite text parameter");
 }
 
@@ -131,6 +138,10 @@ Database::~Database() noexcept {
 }
 
 void Database::exec(const std::string &sql) {
+    if (db_ == nullptr) {
+        throw std::runtime_error("Cannot execute sqlite statement: database handle was null.");
+    }
+
     char *error_message = nullptr;
 
     const int result = sqlite3_exec(
@@ -154,6 +165,10 @@ void Database::exec(const std::string &sql) {
 }
 
 Statement Database::prepare(const std::string &sql) {
+    if (db_ == nullptr) {
+        throw std::runtime_error("Cannot prepare sqlite statement: database handle was null.");
+    }
+
     return Statement(db_, sql);
 }
 
@@ -176,6 +191,10 @@ void Database::rollback_transaction() noexcept {
 }
 
 int64_t Database::last_insert_row_id() const {
+    if (db_ == nullptr) {
+        return 0;
+    }
+
     return sqlite3_last_insert_rowid(db_);
 }
 
