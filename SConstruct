@@ -1,40 +1,76 @@
-#!/usr/bin/env python
-import os
-import sys
+#!/usr/bin/env python3
 
-# The native code uses exceptions for SQLite initialization and error propagation.
-# Keep command-line overrides intact if the caller sets this explicitly.
-if ARGUMENTS.get("disable_exceptions") is None:
-    ARGUMENTS["disable_exceptions"] = "false"
+from pathlib import Path
+from SCons.Script import ARGUMENTS, Default, Glob, SConscript
 
-# Load the build environment configured by godot-cpp
+PROJECT_NAME = "gotool_center"
+TARGET_DIR = Path("addons") / "gotool_center" / "bin"
+
+platform = ARGUMENTS.get("platform", "")
+target = ARGUMENTS.get("target", "")
+arch = ARGUMENTS.get("arch", "")
+
+if not platform:
+    raise RuntimeError("Missing required SCons argument: platform=windows|linux|macos")
+
+if not target:
+    raise RuntimeError("Missing required SCons argument: target=template_debug|template_release")
+
+if not arch:
+    raise RuntimeError("Missing required SCons argument: arch=x86_64|arm64|universal")
+
 env = SConscript("godot-cpp/SConstruct")
 
-# Define the base name of your GDExtension library
-lib_name = "gotool_center"
-output_dir = "project/addons/GoToolCenter/bin"
+TARGET_DIR.mkdir(parents=True, exist_ok=True)
 
-# Setup include directories for the project and third-party libraries
 env.Append(CPPPATH=[
     "src",
-    "third-party",
-    "third-party/doctest",
-    "third-party/nlohmann-json",
     "third-party/sqlite3",
-    "third-party/spdlog/include"
 ])
 
-# Gather C++ source files from the src directory
-sources = Glob("src/*.cpp") + Glob("src/*/*.cpp")
+env.Append(CPPDEFINES=[
+    "SQLITE_THREADSAFE=1",
+    "SQLITE_OMIT_LOAD_EXTENSION",
+])
 
-# Gather third-party source files
-sources += Glob("third-party/sqlite3/*.c")
-sources += Glob("third-party/spdlog/src/*.cpp")
+if platform == "windows":
+    env.Append(CXXFLAGS=[
+        "/std:c++20",
+        "/permissive-",
+        "/EHsc",
+    ])
+else:
+    env.Append(CXXFLAGS=[
+        "-std=c++20",
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+    ])
 
-# Build the shared library, appending the godot-cpp suffix (e.g. .windows.template_debug.x86_64.dll)
+sources = []
+sources += Glob("src/*.cpp")
+sources += Glob("src/**/*.cpp")
+
+sqlite_env = env.Clone()
+
+if platform == "windows":
+    sqlite_env.Append(CCFLAGS=[
+        "/wd4090",
+        "/wd4996",
+    ])
+else:
+    sqlite_env.Append(CCFLAGS=[
+        "-Wno-discarded-qualifiers",
+        "-Wno-unused-parameter",
+    ])
+
+sqlite_objects = sqlite_env.Object("third-party/sqlite3/sqlite3.c")
+
+library_path = TARGET_DIR / f"lib{PROJECT_NAME}{env['suffix']}{env['SHLIBSUFFIX']}"
+
 library = env.SharedLibrary(
-    target=f"{output_dir}/lib{lib_name}{env['suffix']}{env['SHLIBSUFFIX']}",
-    source=sources
+    target=str(library_path),
+    source=sources + sqlite_objects,
 )
 
 Default(library)
