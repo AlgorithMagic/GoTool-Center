@@ -330,6 +330,69 @@ godot::String classify_file_type_from_facts(const FileFacts &facts) {
 
     const godot::String &lower_name = facts.lower_name;
     const godot::String &lower_path = facts.lower_path;
+    const godot::String &extension = facts.extension;
+
+    // Targeted high-priority extension mapping for persisted scan taxonomy.
+    if (extension == ".meshlib") {
+        return "GodotResource";
+    }
+
+    if (extension == ".blend") {
+        return "GodotResource";
+    }
+
+    if (extension == ".tscn" || extension == ".scn") {
+        return "GodotScene";
+    }
+
+    if (extension == ".tres" || extension == ".res") {
+        return "GodotResource";
+    }
+
+    if (extension == ".gd" || extension == ".cs" || extension == ".sh") {
+        return "Script";
+    }
+
+    if (extension == ".gdshader" || extension == ".gdshaderinc") {
+        return "Shader";
+    }
+
+    if (extension == ".png" ||
+        extension == ".jpg" ||
+        extension == ".jpeg" ||
+        extension == ".webp" ||
+        extension == ".svg" ||
+        extension == ".wav" ||
+        extension == ".mp3" ||
+        extension == ".ogg") {
+        return "Asset";
+    }
+
+    if (extension == ".import" || extension == ".godot") {
+        return "Config";
+    }
+
+    if (extension == ".pck" ||
+        extension == ".json" ||
+        extension == ".csv") {
+        return "Data";
+    }
+
+    if (extension == ".x86_64") {
+        return "GeneratedArtifact";
+    }
+
+    if (extension == ".xcf") {
+        return "SourceArt";
+    }
+
+    if (extension == ".py") {
+        return "SourceCode";
+    }
+
+    if (extension == ".txt" || extension == ".md") {
+        return "Documentation";
+    }
 
     if (is_godot_editor_path(lower_path)) {
         if (lower_path.begins_with("res://.godot/editor/filesystem_cache")) {
@@ -974,6 +1037,72 @@ godot::String detect_godot_type_from_facts(const FileFacts &facts, const godot::
     const godot::String &lower_path = facts.lower_path;
     const godot::String &extension = facts.extension;
 
+    // Targeted high-priority extension mapping for persisted godot_type values.
+    if (extension == ".meshlib") {
+        return "MeshLibrary";
+    }
+
+    if (extension == ".blend" || extension == ".tscn" || extension == ".scn") {
+        return "PackedScene";
+    }
+
+    if (extension == ".tres" || extension == ".res") {
+        return "Resource";
+    }
+
+    if (extension == ".gd") {
+        return "GDScript";
+    }
+
+    if (extension == ".cs") {
+        return "CSharpScript";
+    }
+
+    if (extension == ".gdshader") {
+        return "Shader";
+    }
+
+    if (extension == ".gdshaderinc") {
+        return "ShaderInclude";
+    }
+
+    if (extension == ".png" ||
+        extension == ".jpg" ||
+        extension == ".jpeg" ||
+        extension == ".webp") {
+        return "Texture2D";
+    }
+
+    if (extension == ".svg") {
+        return "PortableCompressedTexture2D";
+    }
+
+    if (extension == ".wav") {
+        return "AudioStreamWAV";
+    }
+
+    if (extension == ".mp3") {
+        return "AudioStreamMP3";
+    }
+
+    if (extension == ".ogg") {
+        return "AudioStreamOggVorbis";
+    }
+
+    if (extension == ".import" ||
+        extension == ".godot" ||
+        extension == ".pck" ||
+        extension == ".x86_64" ||
+        extension == ".sh" ||
+        extension == ".xcf" ||
+        extension == ".py" ||
+        extension == ".txt" ||
+        extension == ".md" ||
+        extension == ".json" ||
+        extension == ".csv") {
+        return NOT_GODOT_TYPED;
+    }
+
     if (lower_name == "project.godot") {
         return "ProjectSettings";
     }
@@ -1094,4 +1223,3 @@ godot::String detect_godot_type_from_facts(const FileFacts &facts, const godot::
 }
 
 } // namespace gotool::project_scanner
-

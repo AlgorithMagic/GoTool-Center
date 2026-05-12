@@ -54,6 +54,29 @@ func _initialize() -> void:
 	if inventory.get("custom_classes", null) == null or not (inventory["custom_classes"] is Array):
 		failures.append("Inventory custom_classes should be an Array.")
 
+	var files: Array = inventory.get("files", [])
+	var main_scene_entry: Dictionary = _find_file_entry(files, "res://main.tscn")
+	if main_scene_entry.is_empty():
+		failures.append("Inventory should include res://main.tscn.")
+	else:
+		var main_scene_godot_type: String = String(main_scene_entry.get("godot_type", ""))
+		if main_scene_godot_type != "Node":
+			failures.append(
+				"res://main.tscn godot_type expected Node, got %s." % main_scene_godot_type
+			)
+
+	var material_entry: Dictionary = _find_file_entry(
+		files, "res://tests/fixtures/type_probe_material.tres"
+	)
+	if material_entry.is_empty():
+		failures.append("Inventory should include the StandardMaterial3D type probe resource.")
+	else:
+		var material_godot_type: String = String(material_entry.get("godot_type", ""))
+		if material_godot_type != "StandardMaterial3D":
+			failures.append(
+				"Material godot_type expected StandardMaterial3D, got %s." % material_godot_type
+			)
+
 	if not context.scan_project():
 		failures.append("Second scan_project() call should succeed.")
 
@@ -80,3 +103,11 @@ func _initialize() -> void:
 		push_error("- %s" % failure)
 
 	quit(1)
+
+
+func _find_file_entry(files: Array, path: String) -> Dictionary:
+	for entry: Dictionary in files:
+		if String(entry.get("path", "")) == path:
+			return entry
+
+	return {}

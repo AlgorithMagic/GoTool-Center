@@ -14,6 +14,7 @@ on:
       - "godot-cpp/**"
       - "third-party/**"
       - "addons/GoToolCenter/**"
+      - "project/addons/GoToolCenter/**"
       - ".gitmodules"
       - ".github/workflows/build-gdextension.yml"
 
@@ -26,6 +27,7 @@ on:
       - "godot-cpp/**"
       - "third-party/**"
       - "addons/GoToolCenter/**"
+      - "project/addons/GoToolCenter/**"
       - ".gitmodules"
       - ".github/workflows/build-gdextension.yml"
 
@@ -94,14 +96,14 @@ jobs:
 
       - name: List native library outputs
         run: |
-          python -c "from pathlib import Path; root = Path('addons/GoToolCenter/bin'); print('Output directory:', root.resolve()); [print(p.as_posix()) for p in sorted(root.glob('*'))]"
+          python -c "from pathlib import Path; root = Path('project/addons/GoToolCenter/bin'); print('Output directory:', root.resolve()); [print(p.as_posix()) for p in sorted(root.glob('*'))]"
 
       - name: Upload platform artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
           path: |
-            addons/GoToolCenter/bin/**
+            project/addons/GoToolCenter/bin/**
           if-no-files-found: error
 
   package:

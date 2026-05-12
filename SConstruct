@@ -5,7 +5,7 @@ from SCons.Script import ARGUMENTS, Default, SConscript
 
 PROJECT_NAME = "gotool_center"
 
-ADDON_DIR = Path("addons") / "GoToolCenter"
+ADDON_DIR = Path("project") / "addons" / "GoToolCenter"
 BIN_DIR = ADDON_DIR / "bin"
 
 GODOT_CPP_SCONSTRUCT = Path("godot-cpp") / "SConstruct"
