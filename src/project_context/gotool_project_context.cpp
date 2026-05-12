@@ -3,7 +3,7 @@
 #include "database/gotool_project_inventory_repository.hpp"
 #include "database/gotool_project_registry_repository.hpp"
 #include "database/gotool_schema.hpp"
-#include "project_scanner/gotool_project_scanner.hpp"
+#include "project_scanner/native_scan_pipeline.hpp"
 
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/os.hpp>
@@ -181,6 +181,130 @@ Dictionary to_project_dictionary(const gotool::database::ProjectListItem &item) 
     return project;
 }
 
+gotool::project_scanner::FileQuery file_query_from_dictionary(const Dictionary &filter) {
+    gotool::project_scanner::FileQuery query;
+    query.include_deleted = static_cast<bool>(filter.get("include_deleted", false));
+
+    if (filter.has("parent_id")) {
+        query.parent_id = static_cast<int64_t>(filter.get("parent_id", 0));
+    }
+
+    if (filter.has("is_directory")) {
+        query.is_directory = static_cast<bool>(filter.get("is_directory", false));
+    }
+
+    query.extension = to_utf8(String(filter.get("extension", "")));
+    query.file_type = to_utf8(String(filter.get("file_type", "")));
+    query.godot_type = to_utf8(String(filter.get("godot_type", "")));
+    query.search = to_utf8(String(filter.get("search", "")));
+    return query;
+}
+
+gotool::project_scanner::CustomClassQuery custom_class_query_from_dictionary(const Dictionary &filter) {
+    gotool::project_scanner::CustomClassQuery query;
+    query.language = to_utf8(String(filter.get("language", "")));
+    query.base_type = to_utf8(String(filter.get("base_type", "")));
+    query.search = to_utf8(String(filter.get("search", "")));
+    return query;
+}
+
+Dictionary file_row_to_dictionary(const gotool::project_scanner::FileRow &row) {
+    Dictionary entry;
+    entry["id"] = row.id;
+    entry["file_id"] = row.id;
+    entry["parent_id"] = row.parent_id;
+    entry["path"] = from_utf8("res://" + row.project_relative_path);
+    entry["project_relative_path"] = from_utf8(row.project_relative_path);
+    entry["file_name"] = from_utf8(row.file_name);
+    entry["name"] = from_utf8(row.file_name);
+    entry["extension"] = from_utf8(row.extension);
+    entry["file_type"] = from_utf8(row.file_type);
+    entry["type"] = row.is_directory ? "folder" : "file";
+    entry["godot_type"] = from_utf8(row.godot_type);
+    entry["godot_type_hint"] = from_utf8(row.godot_type);
+    entry["type_hint_source"] = from_utf8(row.type_hint_source);
+    entry["size_bytes"] = row.size_bytes;
+    entry["modified_time_ns"] = row.modified_time_ns;
+    entry["modified_time_unix"] = row.modified_time_ns / 1'000'000'000LL;
+    entry["is_directory"] = row.is_directory;
+    entry["is_hidden"] = row.is_hidden;
+    entry["is_deleted"] = row.is_deleted;
+    entry["scan_generation"] = row.scan_generation;
+    entry["last_seen_generation"] = row.last_seen_generation;
+    entry["dirty_state"] = from_utf8(row.dirty_state);
+    entry["dirty_reason"] = from_utf8(row.dirty_reason);
+    return entry;
+}
+
+Dictionary custom_class_row_to_dictionary(const gotool::project_scanner::CustomClassRow &row) {
+    Dictionary entry;
+    entry["id"] = row.id;
+    entry["class_name"] = from_utf8(row.class_name);
+    entry["script_path"] = from_utf8(row.script_path);
+    entry["script_project_relative_path"] = from_utf8(row.script_project_relative_path);
+    entry["language"] = from_utf8(row.language);
+    entry["base_type"] = from_utf8(row.direct_base_type);
+    entry["direct_base_type"] = from_utf8(row.direct_base_type);
+    entry["is_resource_type"] = row.is_resource_type;
+    entry["is_node_type"] = row.is_node_type;
+    entry["script_file_id"] = row.script_file_id;
+    entry["parser_version"] = row.parser_version;
+    entry["parse_status"] = from_utf8(row.parse_status);
+    entry["parse_error"] = from_utf8(row.parse_error);
+    entry["last_parsed_generation"] = row.last_parsed_generation;
+    return entry;
+}
+
+Dictionary metrics_to_dictionary(const gotool::project_scanner::ScanMetrics &metrics) {
+    Dictionary result;
+    result["total_wall_ms"] = metrics.total_wall_ms;
+    result["traversal_ms"] = metrics.traversal_ms;
+    result["metadata_ms"] = metrics.metadata_ms;
+    result["dirty_check_ms"] = metrics.dirty_check_ms;
+    result["classification_ms"] = metrics.classification_ms;
+    result["script_parse_ms"] = metrics.script_parse_ms;
+    result["sqlite_write_ms"] = metrics.sqlite_write_ms;
+    result["godot_materialization_ms"] = metrics.godot_materialization_ms;
+    result["files_seen"] = metrics.files_seen;
+    result["dirs_seen"] = metrics.dirs_seen;
+    result["dirs_skipped"] = metrics.dirs_skipped;
+    result["entries_clean"] = metrics.entries_clean;
+    result["entries_dirty"] = metrics.entries_dirty;
+    result["entries_new"] = metrics.entries_new;
+    result["entries_deleted"] = metrics.entries_deleted;
+    result["rows_inserted"] = metrics.rows_inserted;
+    result["rows_updated"] = metrics.rows_updated;
+    result["rows_tombstoned"] = metrics.rows_tombstoned;
+    result["scripts_candidates"] = metrics.scripts_candidates;
+    result["scripts_parsed"] = metrics.scripts_parsed;
+    result["scripts_skipped_clean"] = metrics.scripts_skipped_clean;
+    result["bytes_read"] = metrics.bytes_read;
+    result["sqlite_transactions"] = metrics.sqlite_transactions;
+    result["ui_rows_materialized"] = metrics.ui_rows_materialized;
+    result["cancellation_requested"] = metrics.cancellation_requested;
+    result["scan_result_status"] = from_utf8(metrics.scan_result_status);
+    return result;
+}
+
+Dictionary scan_summary_to_dictionary(const gotool::project_scanner::ScanResultSummary &summary) {
+    Dictionary result;
+    result["scan_id"] = summary.scan_run_id;
+    result["scan_run_id"] = summary.scan_run_id;
+    result["scan_generation"] = summary.scan_generation;
+    result["status"] = from_utf8(summary.status);
+    result["files_seen"] = summary.files_seen;
+    result["dirs_seen"] = summary.dirs_seen;
+    result["entries_clean"] = summary.entries_clean;
+    result["entries_dirty"] = summary.entries_dirty;
+    result["entries_new"] = summary.entries_new;
+    result["entries_deleted"] = summary.entries_deleted;
+    result["scripts_candidates"] = summary.scripts_candidates;
+    result["scripts_parsed"] = summary.scripts_parsed;
+    result["scripts_skipped_clean"] = summary.scripts_skipped_clean;
+    result["total_wall_ms"] = summary.total_wall_ms;
+    return result;
+}
+
 } // namespace
 
 void GodotProjectContext::_bind_methods() {
@@ -212,6 +336,61 @@ void GodotProjectContext::_bind_methods() {
     ClassDB::bind_method(
         D_METHOD("scan_project"),
         &GodotProjectContext::scan_project
+    );
+
+    ClassDB::bind_method(
+        D_METHOD("start_scan", "options"),
+        &GodotProjectContext::start_scan
+    );
+
+    ClassDB::bind_method(
+        D_METHOD("cancel_scan", "scan_id"),
+        &GodotProjectContext::cancel_scan
+    );
+
+    ClassDB::bind_method(
+        D_METHOD("get_scan_status", "scan_id"),
+        &GodotProjectContext::get_scan_status
+    );
+
+    ClassDB::bind_method(
+        D_METHOD("get_scan_metrics", "scan_id"),
+        &GodotProjectContext::get_scan_metrics
+    );
+
+    ClassDB::bind_method(
+        D_METHOD("get_file_count", "filter"),
+        &GodotProjectContext::get_file_count
+    );
+
+    ClassDB::bind_method(
+        D_METHOD("get_files_page", "offset", "limit", "sort", "filter"),
+        &GodotProjectContext::get_files_page
+    );
+
+    ClassDB::bind_method(
+        D_METHOD("get_file_details", "file_id"),
+        &GodotProjectContext::get_file_details
+    );
+
+    ClassDB::bind_method(
+        D_METHOD("get_directory_children", "directory_id", "offset", "limit", "sort", "filter"),
+        &GodotProjectContext::get_directory_children
+    );
+
+    ClassDB::bind_method(
+        D_METHOD("get_custom_class_count", "filter"),
+        &GodotProjectContext::get_custom_class_count
+    );
+
+    ClassDB::bind_method(
+        D_METHOD("get_custom_classes_page", "offset", "limit", "sort", "filter"),
+        &GodotProjectContext::get_custom_classes_page
+    );
+
+    ClassDB::bind_method(
+        D_METHOD("export_full_inventory_for_debug"),
+        &GodotProjectContext::export_full_inventory_for_debug
     );
 
     ClassDB::bind_method(
@@ -450,68 +629,251 @@ int64_t GodotProjectContext::register_current_project() {
 }
 
 bool GodotProjectContext::scan_current_project() {
+    const Dictionary result = start_scan(Dictionary());
+    return !result.is_empty() && String(result.get("status", "")) == "completed";
+}
+
+bool GodotProjectContext::scan_project() {
+    return scan_current_project();
+}
+
+Dictionary GodotProjectContext::start_scan(const Dictionary &options) {
     last_error_ = "";
 
     if (database_ == nullptr) {
         last_error_ = "Database is not initialized. Call initialize_database() first.";
         last_scan_results_.clear();
-        return false;
+        return Dictionary();
     }
 
     const int64_t project_id = register_current_project();
 
     if (project_id <= 0) {
         last_scan_results_.clear();
-        return false;
+        return Dictionary();
     }
 
-    Ref<ProjectScanner> scanner;
-    scanner.instantiate();
+    ProjectSettings *project_settings = ProjectSettings::get_singleton();
 
-    if (scanner.is_null()) {
-        last_error_ = "Failed to instantiate ProjectScanner.";
+    if (project_settings == nullptr) {
+        last_error_ = "ProjectSettings singleton was not available.";
         last_scan_results_.clear();
-        return false;
+        return Dictionary();
     }
 
     try {
-        const Dictionary inventory = scanner->scan_project_inventory();
+        gotool::project_scanner::ScanOptions scan_options;
+        scan_options.project_id = project_id;
+        scan_options.project_root = normalize_absolute_path(
+            godot_string_to_path(project_settings->globalize_path("res://"))
+        );
+        scan_options.include_hidden = static_cast<bool>(options.get("include_hidden", true));
+        scan_options.force_rescan = static_cast<bool>(options.get("force_rescan", false));
 
-        if (!inventory.has("files") ||
-            !inventory.has("autoloads") ||
-            !inventory.has("custom_classes")) {
-            last_error_ = "ProjectScanner returned an invalid inventory payload.";
-            last_scan_results_.clear();
-            return false;
-        }
+        gotool::project_scanner::NativeScanPipeline pipeline(*database_);
+        const gotool::project_scanner::ScanResultSummary summary = pipeline.run(scan_options);
 
-        const Variant files_variant = inventory.get("files", Variant());
-        const Variant autoloads_variant = inventory.get("autoloads", Variant());
-        const Variant custom_classes_variant = inventory.get("custom_classes", Variant());
-
-        if (files_variant.get_type() != Variant::ARRAY ||
-            autoloads_variant.get_type() != Variant::ARRAY ||
-            custom_classes_variant.get_type() != Variant::ARRAY) {
-            last_error_ = "ProjectScanner inventory payload must contain arrays.";
-            last_scan_results_.clear();
-            return false;
-        }
-
-        gotool::database::ProjectInventoryRepository repository(*database_);
-        repository.persist_inventory(project_id, inventory);
-
-        last_scan_results_ = inventory;
+        last_scan_results_ = scan_summary_to_dictionary(summary);
+        last_scan_results_["metrics"] = metrics_to_dictionary(
+            gotool::project_scanner::ScanRepository(*database_).get_scan_metrics(project_id, summary.scan_run_id)
+        );
         last_error_ = "";
-        return true;
+        return last_scan_results_;
     } catch (const std::exception &error) {
         last_error_ = error.what();
         last_scan_results_.clear();
-        return false;
+        return Dictionary();
     }
 }
 
-bool GodotProjectContext::scan_project() {
-    return scan_current_project();
+bool GodotProjectContext::cancel_scan(int64_t scan_id) {
+    (void)scan_id;
+    return false;
+}
+
+Dictionary GodotProjectContext::get_scan_status(int64_t scan_id) const {
+    Dictionary result;
+
+    if (database_ == nullptr || current_project_id_ <= 0 || scan_id <= 0) {
+        return result;
+    }
+
+    try {
+        gotool::project_scanner::ScanRepository repository(*database_);
+        result["scan_id"] = scan_id;
+        result["status"] = from_utf8(repository.get_scan_status(current_project_id_, scan_id));
+    } catch (...) {
+        return Dictionary();
+    }
+
+    return result;
+}
+
+Dictionary GodotProjectContext::get_scan_metrics(int64_t scan_id) const {
+    if (database_ == nullptr || current_project_id_ <= 0 || scan_id <= 0) {
+        return Dictionary();
+    }
+
+    try {
+        gotool::project_scanner::ScanRepository repository(*database_);
+        return metrics_to_dictionary(repository.get_scan_metrics(current_project_id_, scan_id));
+    } catch (...) {
+        return Dictionary();
+    }
+}
+
+int64_t GodotProjectContext::get_file_count(const Dictionary &filter) const {
+    if (database_ == nullptr || current_project_id_ <= 0) {
+        return 0;
+    }
+
+    try {
+        gotool::project_scanner::ScanRepository repository(*database_);
+        return repository.count_files(current_project_id_, file_query_from_dictionary(filter));
+    } catch (...) {
+        return 0;
+    }
+}
+
+Array GodotProjectContext::get_files_page(
+    int64_t offset,
+    int64_t limit,
+    const String &sort,
+    const Dictionary &filter
+) const {
+    Array rows;
+
+    if (database_ == nullptr || current_project_id_ <= 0) {
+        return rows;
+    }
+
+    try {
+        gotool::project_scanner::ScanRepository repository(*database_);
+        const std::vector<gotool::project_scanner::FileRow> page = repository.list_files(
+            current_project_id_,
+            file_query_from_dictionary(filter),
+            offset,
+            limit,
+            to_utf8(sort)
+        );
+
+        for (const gotool::project_scanner::FileRow &row : page) {
+            rows.append(file_row_to_dictionary(row));
+        }
+    } catch (...) {
+        return Array();
+    }
+
+    return rows;
+}
+
+Dictionary GodotProjectContext::get_file_details(int64_t file_id) const {
+    if (database_ == nullptr || current_project_id_ <= 0 || file_id <= 0) {
+        return Dictionary();
+    }
+
+    try {
+        gotool::project_scanner::ScanRepository repository(*database_);
+        const std::optional<gotool::project_scanner::FileRow> row =
+            repository.get_file_details(current_project_id_, file_id);
+        if (!row.has_value()) {
+            return Dictionary();
+        }
+        return file_row_to_dictionary(row.value());
+    } catch (...) {
+        return Dictionary();
+    }
+}
+
+Array GodotProjectContext::get_directory_children(
+    int64_t directory_id,
+    int64_t offset,
+    int64_t limit,
+    const String &sort,
+    const Dictionary &filter
+) const {
+    Dictionary child_filter = filter.duplicate();
+    child_filter["parent_id"] = directory_id < 0 ? 0 : directory_id;
+    return get_files_page(offset, limit, sort, child_filter);
+}
+
+int64_t GodotProjectContext::get_custom_class_count(const Dictionary &filter) const {
+    if (database_ == nullptr || current_project_id_ <= 0) {
+        return 0;
+    }
+
+    try {
+        gotool::project_scanner::ScanRepository repository(*database_);
+        return repository.count_custom_classes(current_project_id_, custom_class_query_from_dictionary(filter));
+    } catch (...) {
+        return 0;
+    }
+}
+
+Array GodotProjectContext::get_custom_classes_page(
+    int64_t offset,
+    int64_t limit,
+    const String &sort,
+    const Dictionary &filter
+) const {
+    Array rows;
+
+    if (database_ == nullptr || current_project_id_ <= 0) {
+        return rows;
+    }
+
+    try {
+        gotool::project_scanner::ScanRepository repository(*database_);
+        const std::vector<gotool::project_scanner::CustomClassRow> page = repository.list_custom_classes(
+            current_project_id_,
+            custom_class_query_from_dictionary(filter),
+            offset,
+            limit,
+            to_utf8(sort)
+        );
+
+        for (const gotool::project_scanner::CustomClassRow &row : page) {
+            rows.append(custom_class_row_to_dictionary(row));
+        }
+    } catch (...) {
+        return Array();
+    }
+
+    return rows;
+}
+
+Dictionary GodotProjectContext::export_full_inventory_for_debug() const {
+    Dictionary inventory;
+
+    if (database_ == nullptr || current_project_id_ <= 0) {
+        return inventory;
+    }
+
+    const int64_t file_count = get_file_count(Dictionary());
+    const int64_t class_count = get_custom_class_count(Dictionary());
+
+    Array files;
+    for (int64_t offset = 0; offset < file_count; offset += 500) {
+        const Array page = get_files_page(offset, 500, "path", Dictionary());
+        for (int64_t i = 0; i < page.size(); ++i) {
+            files.append(page[i]);
+        }
+    }
+
+    Array custom_classes;
+    for (int64_t offset = 0; offset < class_count; offset += 500) {
+        const Array page = get_custom_classes_page(offset, 500, "class_name", Dictionary());
+        for (int64_t i = 0; i < page.size(); ++i) {
+            custom_classes.append(page[i]);
+        }
+    }
+
+    inventory["files"] = files;
+    inventory["custom_classes"] = custom_classes;
+    inventory["file_count"] = file_count;
+    inventory["custom_class_count"] = class_count;
+    inventory["scan_summary"] = last_scan_results_;
+    return inventory;
 }
 
 Array GodotProjectContext::list_projects() const {

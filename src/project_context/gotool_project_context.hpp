@@ -29,6 +29,29 @@ public:
     bool scan_current_project();
     bool scan_project();
 
+    Dictionary start_scan(const Dictionary &options);
+    bool cancel_scan(int64_t scan_id);
+    Dictionary get_scan_status(int64_t scan_id) const;
+    Dictionary get_scan_metrics(int64_t scan_id) const;
+    int64_t get_file_count(const Dictionary &filter) const;
+    Array get_files_page(int64_t offset, int64_t limit, const String &sort, const Dictionary &filter) const;
+    Dictionary get_file_details(int64_t file_id) const;
+    Array get_directory_children(
+        int64_t directory_id,
+        int64_t offset,
+        int64_t limit,
+        const String &sort,
+        const Dictionary &filter
+    ) const;
+    int64_t get_custom_class_count(const Dictionary &filter) const;
+    Array get_custom_classes_page(
+        int64_t offset,
+        int64_t limit,
+        const String &sort,
+        const Dictionary &filter
+    ) const;
+    Dictionary export_full_inventory_for_debug() const;
+
     Array list_projects() const;
     Dictionary get_project_summary(int64_t project_id) const;
 

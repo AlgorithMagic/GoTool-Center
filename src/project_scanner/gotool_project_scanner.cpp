@@ -3,18 +3,8 @@
 #include "project_scanner/gotool_project_scanner_rules.hpp"
 
 #include <godot_cpp/classes/dir_access.hpp>
-#include <godot_cpp/classes/editor_file_system.hpp>
-#include <godot_cpp/classes/editor_interface.hpp>
-#include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/file_access.hpp>
-#include <godot_cpp/classes/main_loop.hpp>
-#include <godot_cpp/classes/node.hpp>
-#include <godot_cpp/classes/packed_scene.hpp>
 #include <godot_cpp/classes/project_settings.hpp>
-#include <godot_cpp/classes/resource.hpp>
-#include <godot_cpp/classes/resource_loader.hpp>
-#include <godot_cpp/classes/scene_tree.hpp>
-#include <godot_cpp/classes/scene_state.hpp>
 
 namespace godot {
 
@@ -207,132 +197,7 @@ String ProjectScanner::detect_godot_type(
         facts.extension = extension;
     }
 
-    const String engine_type = detect_godot_type_from_engine(facts, file_type);
-
-    if (!engine_type.is_empty()) {
-        return engine_type;
-    }
-
     return gotool::project_scanner::detect_godot_type_from_facts(facts, file_type);
-}
-
-String ProjectScanner::detect_godot_type_from_engine(
-    const FileFacts &facts,
-    const String &file_type
-) const {
-    if (facts.is_directory || facts.full_path.is_empty()) {
-        return "";
-    }
-
-    String editor_file_type;
-    const Engine *engine = Engine::get_singleton();
-    const bool is_editor_context = engine != nullptr && engine->is_editor_hint();
-    const EditorInterface *editor_interface =
-        is_editor_context ? EditorInterface::get_singleton() : nullptr;
-
-    if (editor_interface != nullptr) {
-        const EditorFileSystem *resource_filesystem = editor_interface->get_resource_filesystem();
-
-        if (resource_filesystem != nullptr) {
-            editor_file_type = resource_filesystem->get_file_type(facts.full_path).strip_edges();
-        }
-    }
-
-    if (is_loadable_godot_resource_candidate(facts, file_type, editor_file_type)) {
-        const String loaded_type = detect_loaded_resource_type(facts.full_path, editor_file_type);
-
-        if (!loaded_type.is_empty()) {
-            return loaded_type;
-        }
-    }
-
-    return editor_file_type;
-}
-
-String ProjectScanner::detect_loaded_resource_type(
-    const String &path,
-    const String &editor_file_type
-) const {
-    const Engine *engine = Engine::get_singleton();
-
-    if (engine != nullptr) {
-        MainLoop *main_loop = engine->get_main_loop();
-        SceneTree *scene_tree = Object::cast_to<SceneTree>(main_loop);
-
-        if (scene_tree != nullptr) {
-            Node *current_scene = scene_tree->get_current_scene();
-
-            if (current_scene != nullptr) {
-                const String current_scene_path = current_scene->get_scene_file_path();
-
-                if (!current_scene_path.is_empty() && current_scene_path == path) {
-                    return "";
-                }
-            }
-        }
-    }
-
-    ResourceLoader *resource_loader = ResourceLoader::get_singleton();
-
-    if (resource_loader == nullptr || path.is_empty()) {
-        return "";
-    }
-
-    const String type_hint = editor_file_type.strip_edges();
-    const bool resource_exists =
-        type_hint.is_empty()
-            ? resource_loader->exists(path)
-            : resource_loader->exists(path, type_hint) || resource_loader->exists(path);
-
-    if (!resource_exists) {
-        return "";
-    }
-
-    Ref<Resource> resource = resource_loader->load(
-        path,
-        type_hint,
-        ResourceLoader::CACHE_MODE_IGNORE_DEEP
-    );
-    String detected_type;
-
-    if (resource.is_valid()) {
-        Ref<PackedScene> scene = resource;
-
-        if (scene.is_valid()) {
-            Ref<SceneState> scene_state = scene->get_state();
-
-            if (scene_state.is_valid() && scene_state->get_node_count() > 0) {
-                detected_type = String(scene_state->get_node_type(0)).strip_edges();
-            }
-        }
-
-        if (detected_type.is_empty()) {
-            detected_type = resource->get_class().strip_edges();
-        }
-    }
-
-    return detected_type;
-}
-
-bool ProjectScanner::is_loadable_godot_resource_candidate(
-    const FileFacts &facts,
-    const String &file_type,
-    const String &editor_file_type
-) const {
-    if (facts.is_directory || facts.full_path.is_empty()) {
-        return false;
-    }
-
-    if (facts.extension == ".tscn" ||
-        facts.extension == ".scn" ||
-        facts.extension == ".tres" ||
-        facts.extension == ".res" ||
-        facts.extension == ".meshlib") {
-        return true;
-    }
-
-    return file_type == "GodotScene" ||
-           (file_type == "GodotResource" && !editor_file_type.is_empty());
 }
 
 void ProjectScanner::scan_directory(const String &path, Array &out_entries) {

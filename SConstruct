@@ -132,10 +132,16 @@ default_targets = [library]
 if build_doctest:
     native_test_sources = [
         "tests/native/test_main.cpp",
+        "tests/native/scanner_benchmark.cpp",
         "tests/native/schema_v2_tests.cpp",
+        "tests/native/scanner_native_tests.cpp",
         "src/database/gotool_database.cpp",
         "src/database/gotool_schema.cpp",
         "src/database/gotool_project_registry_repository.cpp",
+        "src/project_scanner/native_directory_enumerator.cpp",
+        "src/project_scanner/native_scan_pipeline.cpp",
+        "src/project_scanner/native_scan_rules.cpp",
+        "src/project_scanner/native_script_parser.cpp",
     ]
 
     native_test_env = env

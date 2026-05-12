@@ -41,22 +41,6 @@ private:
         const String &extension
     ) const;
 
-    String detect_godot_type_from_engine(
-        const gotool::project_scanner::FileFacts &facts,
-        const String &file_type
-    ) const;
-
-    String detect_loaded_resource_type(
-        const String &path,
-        const String &editor_file_type
-    ) const;
-
-    bool is_loadable_godot_resource_candidate(
-        const gotool::project_scanner::FileFacts &facts,
-        const String &file_type,
-        const String &editor_file_type
-    ) const;
-
     void scan_directory(const String &path, Array &out_entries);
 };
 
