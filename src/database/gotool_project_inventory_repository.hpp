@@ -20,7 +20,7 @@ class ProjectInventoryRepository {
 public:
     explicit ProjectInventoryRepository(Database &database);
 
-    PersistedInventorySummary persist_inventory(const godot::Dictionary &inventory);
+    PersistedInventorySummary persist_inventory(int64_t project_id, const godot::Dictionary &inventory);
 
 private:
     static int64_t current_unix_time();
@@ -29,8 +29,9 @@ private:
     static int64_t variant_to_int64(const godot::Variant &value);
     static godot::String variant_to_string(const godot::Variant &value);
 
-    int64_t create_scan_run(int64_t started_at_unix);
+    int64_t create_scan_run(int64_t project_id, int64_t started_at_unix);
     void complete_scan_run(
+        int64_t project_id,
         int64_t scan_run_id,
         int64_t finished_at_unix,
         int64_t files_found,
@@ -38,32 +39,36 @@ private:
     );
 
     void upsert_project_file(
+        int64_t project_id,
         const godot::Dictionary &entry,
         int64_t scan_run_id,
         int64_t observed_at_unix
     );
-    void delete_missing_project_files(int64_t scan_run_id);
+    void delete_missing_project_files(int64_t project_id, int64_t scan_run_id);
 
     void upsert_autoload(
+        int64_t project_id,
         const godot::Dictionary &entry,
         int64_t scan_run_id,
         int64_t observed_at_unix
     );
-    void delete_missing_autoloads(int64_t scan_run_id);
+    void delete_missing_autoloads(int64_t project_id, int64_t scan_run_id);
 
     void upsert_custom_class(
+        int64_t project_id,
         const godot::Dictionary &entry,
         int64_t scan_run_id,
         int64_t observed_at_unix
     );
-    void delete_missing_custom_classes(int64_t scan_run_id);
+    void delete_missing_custom_classes(int64_t project_id, int64_t scan_run_id);
 
     void upsert_unknown(
+        int64_t project_id,
         const godot::Dictionary &entry,
         int64_t scan_run_id,
         int64_t observed_at_unix
     );
-    void delete_missing_unknowns(int64_t scan_run_id);
+    void delete_missing_unknowns(int64_t project_id, int64_t scan_run_id);
 
     Database *database_ = nullptr;
 };

@@ -94,9 +94,48 @@ void Statement::bind_text(int index, const std::string &value) {
     ensure_sqlite_ok(db_, code, "Failed to bind sqlite text parameter");
 }
 
-void Statement::step_done() {
+Statement::StepResult Statement::step() {
     const int code = sqlite3_step(stmt_);
-    ensure_sqlite_done(db_, code, "Failed while finishing sqlite statement");
+
+    if (code == SQLITE_ROW) {
+        return StepResult::Row;
+    }
+
+    if (code == SQLITE_DONE) {
+        return StepResult::Done;
+    }
+
+    throw_sqlite_error(db_, "Failed while stepping sqlite statement", code);
+}
+
+void Statement::step_done() {
+    if (step() != StepResult::Done) {
+        throw std::runtime_error("Expected sqlite statement to finish with SQLITE_DONE but received a row.");
+    }
+}
+
+bool Statement::column_is_null(int index) const {
+    return sqlite3_column_type(stmt_, index) == SQLITE_NULL;
+}
+
+int64_t Statement::column_int64(int index) const {
+    return sqlite3_column_int64(stmt_, index);
+}
+
+std::string Statement::column_text(int index) const {
+    const unsigned char *text = sqlite3_column_text(stmt_, index);
+
+    if (text == nullptr) {
+        return "";
+    }
+
+    const int bytes = sqlite3_column_bytes(stmt_, index);
+
+    if (bytes <= 0) {
+        return "";
+    }
+
+    return std::string(reinterpret_cast<const char *>(text), static_cast<size_t>(bytes));
 }
 
 Database::Database(const std::string &database_path) {

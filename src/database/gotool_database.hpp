@@ -10,6 +10,11 @@ namespace gotool::database {
 
 class Statement {
 public:
+    enum class StepResult {
+        Row,
+        Done
+    };
+
     Statement(sqlite3 *db, const std::string &sql);
     ~Statement() noexcept;
 
@@ -21,7 +26,11 @@ public:
 
     void bind_int64(int index, int64_t value);
     void bind_text(int index, const std::string &value);
+    StepResult step();
     void step_done();
+    bool column_is_null(int index) const;
+    int64_t column_int64(int index) const;
+    std::string column_text(int index) const;
 
 private:
     sqlite3 *db_ = nullptr;

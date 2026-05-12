@@ -14,6 +14,12 @@ func _initialize() -> void:
 	if not context.initialize_database():
 		failures.append("initialize_database() should succeed.")
 
+	var project_id: int = context.register_current_project()
+	if project_id <= 0:
+		failures.append(
+			"register_current_project() should return a positive project id after initialization."
+		)
+
 	var database_absolute_path: String = context.get_database_absolute_path()
 	var database_virtual_path: String = context.get_database_virtual_path()
 
@@ -28,6 +34,9 @@ func _initialize() -> void:
 
 	if not context.scan_project():
 		failures.append("scan_project() should succeed after initialize_database().")
+
+	if not context.scan_current_project():
+		failures.append("scan_current_project() should succeed after initialize_database().")
 
 	var inventory: Dictionary = context.get_last_scan_results()
 
@@ -47,6 +56,16 @@ func _initialize() -> void:
 
 	if not context.scan_project():
 		failures.append("Second scan_project() call should succeed.")
+
+	var projects: Array = context.list_projects()
+	if projects.is_empty():
+		failures.append("list_projects() should include at least the current project.")
+
+	var summary: Dictionary = context.get_project_summary(project_id)
+	if summary.is_empty():
+		failures.append("get_project_summary(project_id) should return project summary data.")
+	elif not summary.has("project"):
+		failures.append("Project summary should contain a project dictionary.")
 
 	if not context.get_last_error().is_empty():
 		failures.append("last_error should be empty after successful scan_project().")

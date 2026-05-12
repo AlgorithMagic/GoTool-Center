@@ -15,6 +15,7 @@ EXTENSION_API_FILE = Path("third-party") / "godot" / "extension_api.json"
 platform = ARGUMENTS.get("platform", "")
 build_target = ARGUMENTS.get("target", "")
 arch = ARGUMENTS.get("arch", "")
+build_doctest = str(ARGUMENTS.pop("doctest", "0")).lower() in {"1", "true", "yes"}
 
 if not platform:
     raise RuntimeError("Missing required SCons argument: platform=windows|linux|macos")
@@ -53,6 +54,7 @@ env = SConscript(str(GODOT_CPP_SCONSTRUCT))
 env.AppendUnique(CPPPATH=[
     "src",
     "third-party/sqlite3",
+    "third-party/doctest",
 ])
 
 env.AppendUnique(CPPDEFINES=[
@@ -125,4 +127,28 @@ library = env.SharedLibrary(
     source=cpp_sources + sqlite_objects,
 )
 
-Default(library)
+default_targets = [library]
+
+if build_doctest:
+    native_test_sources = [
+        "tests/native/test_main.cpp",
+        "tests/native/schema_v2_tests.cpp",
+        "src/database/gotool_database.cpp",
+        "src/database/gotool_schema.cpp",
+        "src/database/gotool_project_registry_repository.cpp",
+    ]
+
+    native_test_env = env
+
+    native_test_target = (
+        Path("build") / "tests" / platform / build_target / arch / "gotool_native_tests"
+    ).as_posix()
+
+    native_test_binary = native_test_env.Program(
+        target=native_test_target,
+        source=native_test_sources + [SQLITE_SOURCE.as_posix()],
+    )
+
+    default_targets.append(native_test_binary)
+
+Default(default_targets)
