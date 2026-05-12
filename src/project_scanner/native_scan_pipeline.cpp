@@ -195,6 +195,48 @@ CustomClassRow read_custom_class_row(Statement &statement) {
     return row;
 }
 
+class ScanCancelledError : public std::runtime_error {
+public:
+    ScanCancelledError() :
+        std::runtime_error("scan_cancelled") {}
+};
+
+bool is_cancel_requested(const std::atomic_bool *cancel_requested) {
+    return cancel_requested != nullptr && cancel_requested->load(std::memory_order_relaxed);
+}
+
+void throw_if_cancel_requested(const std::atomic_bool *cancel_requested, ScanMetrics &metrics) {
+    if (!is_cancel_requested(cancel_requested)) {
+        return;
+    }
+
+    metrics.cancellation_requested = true;
+    metrics.scan_result_status = "cancelled";
+    throw ScanCancelledError();
+}
+
+ScanResultSummary build_scan_summary(
+    int64_t scan_run_id,
+    ScanGeneration generation,
+    const ScanMetrics &metrics
+) {
+    ScanResultSummary summary;
+    summary.scan_run_id = scan_run_id;
+    summary.scan_generation = generation;
+    summary.status = metrics.scan_result_status;
+    summary.files_seen = metrics.files_seen;
+    summary.dirs_seen = metrics.dirs_seen;
+    summary.entries_clean = metrics.entries_clean;
+    summary.entries_dirty = metrics.entries_dirty;
+    summary.entries_new = metrics.entries_new;
+    summary.entries_deleted = metrics.entries_deleted;
+    summary.scripts_candidates = metrics.scripts_candidates;
+    summary.scripts_parsed = metrics.scripts_parsed;
+    summary.scripts_skipped_clean = metrics.scripts_skipped_clean;
+    summary.total_wall_ms = metrics.total_wall_ms;
+    return summary;
+}
+
 } // namespace
 
 ScanRepository::ScanRepository(gotool::database::Database &database) :
@@ -228,19 +270,25 @@ void ScanRepository::complete_scan_run(
     int64_t scan_run_id,
     ScanGeneration generation,
     const ScanMetrics &metrics,
-    int64_t finished_at_unix
+    int64_t finished_at_unix,
+    const std::string &error_message
 ) {
     Statement update_run = database_->prepare(
         "UPDATE project_scan_runs "
-        "SET finished_at_unix = ?1, status = ?2, files_found = ?3, folders_found = ?4, error_message = NULL "
-        "WHERE project_id = ?5 AND id = ?6;"
+        "SET finished_at_unix = ?1, status = ?2, files_found = ?3, folders_found = ?4, error_message = ?5 "
+        "WHERE project_id = ?6 AND id = ?7;"
     );
     update_run.bind_int64(1, finished_at_unix);
     update_run.bind_text(2, metrics.scan_result_status);
     update_run.bind_int64(3, metrics.files_seen);
     update_run.bind_int64(4, metrics.dirs_seen);
-    update_run.bind_int64(5, project_id);
-    update_run.bind_int64(6, scan_run_id);
+    if (error_message.empty()) {
+        update_run.bind_null(5);
+    } else {
+        update_run.bind_text(5, error_message);
+    }
+    update_run.bind_int64(6, project_id);
+    update_run.bind_int64(7, scan_run_id);
     update_run.step_done();
 
     Statement insert_metrics = database_->prepare(R"sql(
@@ -324,13 +372,15 @@ void ScanRepository::write_scan_results(
     PathArena &arena,
     std::vector<EntryRecord> &records,
     const std::vector<ParsedScriptRecord> &parsed_scripts,
-    ScanMetrics &metrics
+    ScanMetrics &metrics,
+    const std::atomic_bool *cancel_requested
 ) {
     const auto write_start = std::chrono::steady_clock::now();
     const int64_t observed_at_unix = current_unix_time();
 
     Transaction transaction(*database_);
     ++metrics.sqlite_transactions;
+    throw_if_cancel_requested(cancel_requested, metrics);
 
     Statement upsert_file = database_->prepare(R"sql(
         INSERT INTO project_files (
@@ -376,6 +426,10 @@ void ScanRepository::write_scan_results(
     )sql");
 
     for (size_t i = 0; i < records.size(); ++i) {
+        if ((i % 256) == 0) {
+            throw_if_cancel_requested(cancel_requested, metrics);
+        }
+
         EntryRecord &record = records[i];
         const std::string project_path = arena.string_at(record.path_offset, record.path_length);
         const std::string name = arena.string_at(record.name_offset, record.name_length);
@@ -420,10 +474,14 @@ void ScanRepository::write_scan_results(
         upsert_file.step_done();
     }
 
+    throw_if_cancel_requested(cancel_requested, metrics);
+
     for (const ParsedScriptRecord &parsed : parsed_scripts) {
         if (parsed.record_index >= records.size()) {
             continue;
         }
+
+        throw_if_cancel_requested(cancel_requested, metrics);
 
         const EntryRecord &record = records[parsed.record_index];
         Statement update_parse_status = database_->prepare(
@@ -491,6 +549,8 @@ void ScanRepository::write_scan_results(
         upsert_class.step_done();
     }
 
+    throw_if_cancel_requested(cancel_requested, metrics);
+
     Statement refresh_clean_classes = database_->prepare(R"sql(
         UPDATE project_custom_classes
         SET last_seen_scan_run_id = ?1,
@@ -510,6 +570,8 @@ void ScanRepository::write_scan_results(
     refresh_clean_classes.bind_int64(4, generation);
     refresh_clean_classes.step_done();
 
+    throw_if_cancel_requested(cancel_requested, metrics);
+
     Statement delete_stale_classes = database_->prepare(R"sql(
         DELETE FROM project_custom_classes
         WHERE project_id = ?1
@@ -524,6 +586,8 @@ void ScanRepository::write_scan_results(
     delete_stale_classes.bind_int64(1, project_id);
     delete_stale_classes.bind_int64(2, generation);
     delete_stale_classes.step_done();
+
+    throw_if_cancel_requested(cancel_requested, metrics);
 
     Statement tombstone = database_->prepare(R"sql(
         UPDATE project_files
@@ -562,6 +626,8 @@ void ScanRepository::write_scan_results(
     deleted_entries.bind_int64(3, observed_at_unix);
     deleted_entries.bind_int64(4, project_id);
     deleted_entries.step_done();
+
+    throw_if_cancel_requested(cancel_requested, metrics);
 
     metrics.rows_inserted = metrics.entries_new;
     metrics.rows_updated = static_cast<int64_t>(records.size()) - metrics.entries_new;
@@ -745,142 +811,248 @@ std::string ScanRepository::get_scan_status(int64_t project_id, int64_t scan_run
 NativeScanPipeline::NativeScanPipeline(gotool::database::Database &database) :
     database_(&database) {}
 
-ScanResultSummary NativeScanPipeline::run(const ScanOptions &options) {
-    if (database_ == nullptr) {
-        throw std::runtime_error("NativeScanPipeline requires a database.");
-    }
-    if (options.project_id <= 0) {
-        throw std::runtime_error("NativeScanPipeline requires a valid project_id.");
-    }
+NativeScanResult NativeScanPipeline::run_detailed(const ScanOptions &options) {
     if (options.project_root.empty()) {
         throw std::runtime_error("NativeScanPipeline requires a project root.");
     }
 
-    const auto scan_start = std::chrono::steady_clock::now();
-    ScanMetrics metrics;
-    ScanRepository repository(*database_);
-    const ScanGeneration generation = repository.next_generation(options.project_id);
-    const int64_t scan_run_id = repository.create_scan_run(options.project_id, generation, current_unix_time());
-
-    PathArena arena;
-    std::vector<EntryRecord> records;
-    records.reserve(4096);
-
-    SkipPolicy skip_policy;
-    NativeDirectoryEnumerator enumerator;
-    EnumerationOptions enumeration_options;
-    enumeration_options.root = options.project_root;
-    enumeration_options.include_hidden = options.include_hidden;
-    enumeration_options.skip_policy = &skip_policy;
-
-    const auto traversal_start = std::chrono::steady_clock::now();
-    const EnumerationResult enumeration_result = enumerator.enumerate(enumeration_options, arena, records);
-    const auto traversal_end = std::chrono::steady_clock::now();
-    metrics.traversal_ms = elapsed_ms(traversal_start, traversal_end);
-    metrics.files_seen = enumeration_result.files_seen;
-    metrics.dirs_seen = enumeration_result.dirs_seen;
-    metrics.dirs_skipped = enumeration_result.dirs_skipped;
-    metrics.cancellation_requested = !enumeration_result.completed;
-    metrics.scan_result_status = enumeration_result.completed ? "completed" : "cancelled";
-
-    const auto dirty_start = std::chrono::steady_clock::now();
-    const std::unordered_map<std::string, ExistingEntrySnapshot> existing =
-        repository.load_existing_entries(options.project_id);
-
-    std::vector<ParsedScriptRecord> parsed_scripts;
-    parsed_scripts.reserve(256);
-
-    for (size_t i = 0; i < records.size(); ++i) {
-        EntryRecord &record = records[i];
-        const std::string project_path = arena.string_at(record.path_offset, record.path_length);
-        const std::string platform_id = platform_file_id_to_string(record);
-
-        std::optional<ExistingEntrySnapshot> snapshot;
-        const auto found = existing.find(project_path);
-        if (found != existing.end()) {
-            snapshot = found->second;
+    if (options.persist_to_database) {
+        if (database_ == nullptr) {
+            throw std::runtime_error("NativeScanPipeline requires a database when persistence is enabled.");
         }
-
-        const DirtyCheckResult dirty = detect_dirty_state(
-            record.entry_kind,
-            record.size_bytes,
-            record.modified_time_ns,
-            platform_id,
-            snapshot,
-            options.force_rescan
-        );
-        record.dirty_state = dirty.state;
-        record.dirty_reason = dirty.reason;
-
-        if (dirty.state == DirtyState::Clean) {
-            ++metrics.entries_clean;
-        } else {
-            ++metrics.entries_dirty;
-            if (dirty.reason == DirtyReason::NewPath) {
-                ++metrics.entries_new;
-            }
-        }
-
-        if (record.entry_kind == EntryKind::File) {
-            const std::string extension = extension_from_path(project_path);
-            if (is_script_extension(extension)) {
-                ++metrics.scripts_candidates;
-                if (dirty.state == DirtyState::Clean) {
-                    ++metrics.scripts_skipped_clean;
-                } else {
-                    const auto parse_start = std::chrono::steady_clock::now();
-                    ParsedScriptRecord parsed;
-                    parsed.record_index = i;
-                    parsed.project_relative_path = project_path;
-                    parsed.extension = extension;
-                    parsed.parse_result = parse_script_header(options.project_root / std::filesystem::u8path(project_path), extension);
-                    metrics.script_parse_ms += elapsed_ms(parse_start, std::chrono::steady_clock::now());
-                    metrics.bytes_read += parsed.parse_result.bytes_read;
-                    ++metrics.scripts_parsed;
-                    parsed_scripts.push_back(std::move(parsed));
-                }
-            }
+        if (options.project_id <= 0) {
+            throw std::runtime_error("NativeScanPipeline requires a valid project_id when persistence is enabled.");
         }
     }
-    metrics.dirty_check_ms = elapsed_ms(dirty_start, std::chrono::steady_clock::now());
 
-    repository.write_scan_results(
-        options.project_id,
-        scan_run_id,
-        generation,
-        options.project_root,
-        arena,
-        records,
-        parsed_scripts,
-        metrics
-    );
+    const auto scan_start = std::chrono::steady_clock::now();
+    NativeScanResult result;
+    ScanMetrics &metrics = result.metrics;
+    result.records.reserve(4096);
 
-    metrics.total_wall_ms = elapsed_ms(scan_start, std::chrono::steady_clock::now());
+    int64_t scan_run_id = options.scan_run_id;
+    ScanGeneration generation = options.scan_generation;
 
-    // Persist the final wall time after the transactional write has inserted the metrics row.
-    Statement update_metrics = database_->prepare(
-        "UPDATE scan_metrics SET total_wall_ms = ?1 WHERE project_id = ?2 AND scan_run_id = ?3;"
-    );
-    update_metrics.bind_int64(1, metrics.total_wall_ms);
-    update_metrics.bind_int64(2, options.project_id);
-    update_metrics.bind_int64(3, scan_run_id);
-    update_metrics.step_done();
+    std::optional<ScanRepository> repository;
+    if (database_ != nullptr && options.project_id > 0) {
+        repository.emplace(*database_);
+    }
 
-    ScanResultSummary summary;
-    summary.scan_run_id = scan_run_id;
-    summary.scan_generation = generation;
-    summary.status = metrics.scan_result_status;
-    summary.files_seen = metrics.files_seen;
-    summary.dirs_seen = metrics.dirs_seen;
-    summary.entries_clean = metrics.entries_clean;
-    summary.entries_dirty = metrics.entries_dirty;
-    summary.entries_new = metrics.entries_new;
-    summary.entries_deleted = metrics.entries_deleted;
-    summary.scripts_candidates = metrics.scripts_candidates;
-    summary.scripts_parsed = metrics.scripts_parsed;
-    summary.scripts_skipped_clean = metrics.scripts_skipped_clean;
-    summary.total_wall_ms = metrics.total_wall_ms;
-    return summary;
+    if (options.persist_to_database) {
+        if (!repository.has_value()) {
+            throw std::runtime_error("NativeScanPipeline could not initialize repository for persistent scan.");
+        }
+
+        if (scan_run_id > 0 && generation <= 0) {
+            throw std::runtime_error("scan_generation must be provided when scan_run_id is preallocated.");
+        }
+
+        if (generation <= 0) {
+            generation = repository->next_generation(options.project_id);
+        }
+
+        if (scan_run_id <= 0) {
+            const int64_t started_at_unix =
+                options.started_at_unix > 0 ? options.started_at_unix : current_unix_time();
+            scan_run_id = repository->create_scan_run(options.project_id, generation, started_at_unix);
+        }
+    }
+
+    std::unordered_map<std::string, ExistingEntrySnapshot> existing;
+
+    try {
+        throw_if_cancel_requested(options.cancel_requested, metrics);
+
+        const auto metadata_start = std::chrono::steady_clock::now();
+        if (repository.has_value()) {
+            existing = repository->load_existing_entries(options.project_id);
+        }
+        metrics.metadata_ms = elapsed_ms(metadata_start, std::chrono::steady_clock::now());
+
+        throw_if_cancel_requested(options.cancel_requested, metrics);
+
+        SkipPolicy skip_policy;
+        NativeDirectoryEnumerator enumerator;
+        EnumerationOptions enumeration_options;
+        enumeration_options.root = options.project_root;
+        enumeration_options.include_hidden = options.include_hidden;
+        enumeration_options.skip_policy = &skip_policy;
+        enumeration_options.cancel_requested = options.cancel_requested;
+
+        const auto traversal_start = std::chrono::steady_clock::now();
+        const EnumerationResult enumeration_result =
+            enumerator.enumerate(enumeration_options, result.arena, result.records);
+        metrics.traversal_ms = elapsed_ms(traversal_start, std::chrono::steady_clock::now());
+        metrics.files_seen = enumeration_result.files_seen;
+        metrics.dirs_seen = enumeration_result.dirs_seen;
+        metrics.dirs_skipped = enumeration_result.dirs_skipped;
+
+        if (!enumeration_result.completed) {
+            metrics.cancellation_requested = true;
+            metrics.scan_result_status = "cancelled";
+            throw ScanCancelledError();
+        }
+
+        throw_if_cancel_requested(options.cancel_requested, metrics);
+
+        if (!options.persist_to_database &&
+            options.result_limit > 0 &&
+            static_cast<int64_t>(result.records.size()) > options.result_limit) {
+            result.records.resize(static_cast<size_t>(options.result_limit));
+        }
+
+        const auto dirty_start = std::chrono::steady_clock::now();
+        std::vector<std::pair<size_t, std::string>> script_candidates;
+        script_candidates.reserve(256);
+
+        for (size_t i = 0; i < result.records.size(); ++i) {
+            if ((i % 512) == 0) {
+                throw_if_cancel_requested(options.cancel_requested, metrics);
+            }
+
+            EntryRecord &record = result.records[i];
+            const std::string project_path = result.arena.string_at(record.path_offset, record.path_length);
+            const std::string platform_id = platform_file_id_to_string(record);
+
+            std::optional<ExistingEntrySnapshot> snapshot;
+            const auto found = existing.find(project_path);
+            if (found != existing.end()) {
+                snapshot = found->second;
+            }
+
+            const DirtyCheckResult dirty = detect_dirty_state(
+                record.entry_kind,
+                record.size_bytes,
+                record.modified_time_ns,
+                platform_id,
+                snapshot,
+                options.force_rescan
+            );
+            record.dirty_state = dirty.state;
+            record.dirty_reason = dirty.reason;
+
+            if (dirty.state == DirtyState::Clean) {
+                ++metrics.entries_clean;
+            } else {
+                ++metrics.entries_dirty;
+                if (dirty.reason == DirtyReason::NewPath) {
+                    ++metrics.entries_new;
+                }
+            }
+
+            if (!options.collect_custom_classes || record.entry_kind != EntryKind::File) {
+                continue;
+            }
+
+            const std::string extension = extension_from_path(project_path);
+            if (!is_script_extension(extension)) {
+                continue;
+            }
+
+            ++metrics.scripts_candidates;
+            if (dirty.state == DirtyState::Clean) {
+                ++metrics.scripts_skipped_clean;
+                continue;
+            }
+
+            script_candidates.emplace_back(i, extension);
+        }
+        metrics.dirty_check_ms = elapsed_ms(dirty_start, std::chrono::steady_clock::now());
+
+        throw_if_cancel_requested(options.cancel_requested, metrics);
+
+        if (options.collect_custom_classes) {
+            for (const std::pair<size_t, std::string> &candidate : script_candidates) {
+                throw_if_cancel_requested(options.cancel_requested, metrics);
+
+                const size_t record_index = candidate.first;
+                const std::string project_path = result.arena.string_at(
+                    result.records[record_index].path_offset,
+                    result.records[record_index].path_length
+                );
+
+                const auto parse_start = std::chrono::steady_clock::now();
+                ParsedScriptRecord parsed;
+                parsed.record_index = record_index;
+                parsed.project_relative_path = project_path;
+                parsed.extension = candidate.second;
+                parsed.parse_result = parse_script_header(
+                    options.project_root / std::filesystem::u8path(project_path),
+                    candidate.second
+                );
+                metrics.script_parse_ms += elapsed_ms(parse_start, std::chrono::steady_clock::now());
+                metrics.bytes_read += parsed.parse_result.bytes_read;
+                ++metrics.scripts_parsed;
+                result.parsed_scripts.push_back(std::move(parsed));
+            }
+        }
+
+        throw_if_cancel_requested(options.cancel_requested, metrics);
+
+        if (options.persist_to_database) {
+            repository->write_scan_results(
+                options.project_id,
+                scan_run_id,
+                generation,
+                options.project_root,
+                result.arena,
+                result.records,
+                result.parsed_scripts,
+                metrics,
+                options.cancel_requested
+            );
+        }
+
+        metrics.total_wall_ms = elapsed_ms(scan_start, std::chrono::steady_clock::now());
+
+        if (options.persist_to_database) {
+            // Persist final wall time after the scan_metrics row has been written.
+            Statement update_metrics = database_->prepare(
+                "UPDATE scan_metrics SET total_wall_ms = ?1 WHERE project_id = ?2 AND scan_run_id = ?3;"
+            );
+            update_metrics.bind_int64(1, metrics.total_wall_ms);
+            update_metrics.bind_int64(2, options.project_id);
+            update_metrics.bind_int64(3, scan_run_id);
+            update_metrics.step_done();
+        }
+    } catch (const ScanCancelledError &) {
+        metrics.cancellation_requested = true;
+        metrics.scan_result_status = "cancelled";
+        metrics.total_wall_ms = elapsed_ms(scan_start, std::chrono::steady_clock::now());
+
+        if (options.persist_to_database && repository.has_value() && scan_run_id > 0) {
+            repository->complete_scan_run(
+                options.project_id,
+                scan_run_id,
+                generation,
+                metrics,
+                current_unix_time()
+            );
+        }
+    } catch (const std::exception &error) {
+        metrics.scan_result_status = "failed";
+        metrics.total_wall_ms = elapsed_ms(scan_start, std::chrono::steady_clock::now());
+
+        if (options.persist_to_database && repository.has_value() && scan_run_id > 0) {
+            repository->complete_scan_run(
+                options.project_id,
+                scan_run_id,
+                generation,
+                metrics,
+                current_unix_time(),
+                error.what()
+            );
+        }
+
+        throw;
+    }
+
+    result.summary = build_scan_summary(scan_run_id, generation, metrics);
+    return result;
+}
+
+ScanResultSummary NativeScanPipeline::run(const ScanOptions &options) {
+    return run_detailed(options).summary;
 }
 
 } // namespace gotool::project_scanner

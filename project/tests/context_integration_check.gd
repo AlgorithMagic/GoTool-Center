@@ -43,17 +43,34 @@ func _initialize() -> void:
 
 	var forced_summary: Dictionary = context.start_scan({"force_rescan": true})
 	if forced_summary.is_empty():
-		failures.append("start_scan({force_rescan=true}) should return scan summary.")
+		failures.append("start_scan({force_rescan=true}) should return immediate scan lifecycle data.")
+
+	var first_scan_id: int = int(forced_summary.get("scan_id", 0))
+	if first_scan_id <= 0:
+		failures.append("start_scan() should return a positive scan_id.")
+
+	var forced_status: String = String(forced_summary.get("status", ""))
+	if not (
+		forced_status == "queued"
+		or forced_status == "running"
+		or forced_status == "already_running"
+	):
+		failures.append("start_scan() should return queued/running lifecycle status.")
+
+	var first_status: Dictionary = _wait_for_scan_completion(context, first_scan_id, 60000)
+	if first_status.is_empty():
+		failures.append("get_scan_status(scan_id) should return lifecycle status.")
+	elif String(first_status.get("status", "")) != "completed":
+		failures.append("Async start_scan() should transition to completed status.")
 
 	var first_summary: Dictionary = context.get_last_scan_results()
 	if first_summary.is_empty():
-		failures.append("get_last_scan_results() should contain scan summary after start_scan().")
+		failures.append("get_last_scan_results() should contain scan summary after async completion.")
 	elif not first_summary.has("scan_id"):
 		failures.append("Scan summary should contain scan_id.")
 	elif first_summary.has("files"):
 		failures.append("Scan summary should not materialize full files array by default.")
 
-	var first_scan_id: int = int(first_summary.get("scan_id", 0))
 	var first_metrics: Dictionary = context.get_scan_metrics(first_scan_id)
 	if first_metrics.is_empty():
 		failures.append("get_scan_metrics(scan_id) should return persisted metrics.")
@@ -175,3 +192,22 @@ func _find_custom_class(custom_classes: Array, expected_class_name: String) -> D
 			return entry
 
 	return {}
+
+
+func _wait_for_scan_completion(
+		context: GodotProjectContext,
+		scan_id: int,
+		timeout_ms: int = 30000
+	) -> Dictionary:
+	var started_ms: int = Time.get_ticks_msec()
+	var status: Dictionary = {}
+
+	while Time.get_ticks_msec() - started_ms <= timeout_ms:
+		status = context.get_scan_status(scan_id)
+		var value: String = String(status.get("status", ""))
+		if not (value == "queued" or value == "running" or value == "already_running"):
+			return status
+
+		OS.delay_msec(25)
+
+	return status

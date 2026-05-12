@@ -1,6 +1,8 @@
 #pragma once
 
 #include "database/gotool_database.hpp"
+#include "project_scanner/file_watcher.hpp"
+#include "project_scanner/native_scan_rules.hpp"
 
 #include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/core/class_db.hpp>
@@ -8,8 +10,14 @@
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/string.hpp>
 
+#include <atomic>
+#include <condition_variable>
 #include <cstdint>
+#include <filesystem>
 #include <memory>
+#include <mutex>
+#include <string>
+#include <thread>
 
 namespace godot {
 
@@ -20,6 +28,8 @@ protected:
     static void _bind_methods();
 
 public:
+    ~GodotProjectContext() override;
+
     bool initialize_database();
     int64_t register_current_project();
 
@@ -33,6 +43,16 @@ public:
     bool cancel_scan(int64_t scan_id);
     Dictionary get_scan_status(int64_t scan_id) const;
     Dictionary get_scan_metrics(int64_t scan_id) const;
+
+    Dictionary scan_project_inventory_fast(const Dictionary &options);
+    Dictionary scan_current_project_fast(const Dictionary &options);
+
+    bool start_watcher();
+    void stop_watcher();
+    Dictionary get_watcher_status() const;
+    Array consume_watcher_changes();
+    Array get_dirty_paths();
+
     int64_t get_file_count(const Dictionary &filter) const;
     Array get_files_page(int64_t offset, int64_t limit, const String &sort, const Dictionary &filter) const;
     Dictionary get_file_details(int64_t file_id) const;
@@ -59,16 +79,45 @@ public:
     String get_last_error() const;
 
 private:
+    struct ActiveScanState {
+        int64_t scan_id = 0;
+        int64_t project_id = 0;
+        int64_t scan_generation = 0;
+        int64_t started_at_unix = 0;
+        int64_t finished_at_unix = 0;
+        std::string status = "queued";
+        std::string last_error;
+        gotool::project_scanner::ScanMetrics metrics;
+        std::atomic_bool cancellation_requested { false };
+    };
+
+    static int64_t current_unix_time();
+    std::filesystem::path get_current_project_root_path() const;
+    void stop_scan_worker();
+    void join_finished_scan_worker_if_idle();
+    void sync_last_scan_results_from_active_state() const;
+    Dictionary active_state_to_summary_dictionary(const ActiveScanState &state) const;
+
     std::unique_ptr<gotool::database::Database> database_;
+    mutable std::mutex database_mutex_;
+
+    mutable std::mutex scan_mutex_;
+    mutable std::condition_variable scan_cv_;
+    std::shared_ptr<ActiveScanState> active_scan_state_;
+    std::thread scan_worker_;
+
+    std::unique_ptr<gotool::project_scanner::FileWatcher> file_watcher_;
+    mutable std::mutex watcher_mutex_;
+
     int64_t current_project_id_ = 0;
     String current_identity_source_;
     String current_identity_warning_;
 
     String database_virtual_path_;
     String database_absolute_path_;
-    String last_error_;
+    mutable String last_error_;
 
-    Dictionary last_scan_results_;
+    mutable Dictionary last_scan_results_;
 };
 
 } // namespace godot

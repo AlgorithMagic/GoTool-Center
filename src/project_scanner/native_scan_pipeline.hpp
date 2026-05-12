@@ -4,6 +4,7 @@
 #include "project_scanner/native_directory_enumerator.hpp"
 #include "project_scanner/native_script_parser.hpp"
 
+#include <atomic>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -16,6 +17,15 @@ struct ParsedScriptRecord {
     std::string project_relative_path;
     std::string extension;
     ScriptParseResult parse_result;
+};
+
+struct NativeScanResult {
+    ScanResultSummary summary;
+    ScanMetrics metrics;
+    std::string error_message;
+    PathArena arena;
+    std::vector<EntryRecord> records;
+    std::vector<ParsedScriptRecord> parsed_scripts;
 };
 
 struct FileQuery {
@@ -81,7 +91,8 @@ public:
         int64_t scan_run_id,
         ScanGeneration generation,
         const ScanMetrics &metrics,
-        int64_t finished_at_unix
+        int64_t finished_at_unix,
+        const std::string &error_message = ""
     );
     std::unordered_map<std::string, ExistingEntrySnapshot> load_existing_entries(int64_t project_id);
     void write_scan_results(
@@ -92,7 +103,8 @@ public:
         PathArena &arena,
         std::vector<EntryRecord> &records,
         const std::vector<ParsedScriptRecord> &parsed_scripts,
-        ScanMetrics &metrics
+        ScanMetrics &metrics,
+        const std::atomic_bool *cancel_requested
     );
 
     int64_t count_files(int64_t project_id, const FileQuery &query) const;
@@ -121,8 +133,10 @@ private:
 
 class NativeScanPipeline {
 public:
+    NativeScanPipeline() = default;
     explicit NativeScanPipeline(gotool::database::Database &database);
 
+    NativeScanResult run_detailed(const ScanOptions &options);
     ScanResultSummary run(const ScanOptions &options);
 
 private:

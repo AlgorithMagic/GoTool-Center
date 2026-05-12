@@ -7,6 +7,7 @@
 
 #include "doctest.h"
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -20,9 +21,12 @@ using gotool::database::Statement;
 using gotool::project_scanner::DirtyReason;
 using gotool::project_scanner::DirtyState;
 using gotool::project_scanner::EntryKind;
+using gotool::project_scanner::EnumerationOptions;
+using gotool::project_scanner::EnumerationResult;
 using gotool::project_scanner::ExistingEntrySnapshot;
 using gotool::project_scanner::FileTypeId;
 using gotool::project_scanner::GodotTypeHint;
+using gotool::project_scanner::NativeDirectoryEnumerator;
 using gotool::project_scanner::NativeScanPipeline;
 using gotool::project_scanner::ParseStatus;
 using gotool::project_scanner::PathArena;
@@ -304,4 +308,93 @@ TEST_CASE("scanner_schema_v3_supports_batched_writes_tombstones_and_paging") {
     const gotool::project_scanner::ScanResultSummary deleted = pipeline.run(options);
     CHECK(deleted.entries_deleted >= 1);
     CHECK(query_int64(database, "SELECT COUNT(*) FROM deleted_entries WHERE project_id = 1;") >= 1);
+}
+
+TEST_CASE("native_directory_enumerator_stops_when_cancel_already_requested") {
+    TemporaryRoot root(make_temp_root("enumerator_cancel_before_start"));
+    write_text(root.path / "project.godot", "[application]\n");
+    write_text(root.path / "scripts" / "player.gd", "class_name Player\nextends Node\n");
+
+    std::atomic_bool cancel_requested = true;
+    EnumerationOptions options;
+    options.root = root.path;
+    options.include_hidden = true;
+    options.cancel_requested = &cancel_requested;
+
+    PathArena arena;
+    std::vector<gotool::project_scanner::EntryRecord> records;
+    NativeDirectoryEnumerator enumerator;
+    const EnumerationResult result = enumerator.enumerate(options, arena, records);
+
+    CHECK_FALSE(result.completed);
+}
+
+TEST_CASE("native_scan_pipeline_reports_cancelled_before_enumeration_and_keeps_db_clean") {
+    TemporaryRoot root(make_temp_root("pipeline_cancel_before_enumeration"));
+    write_text(root.path / "project.godot", "[application]\n");
+    write_text(root.path / "scripts" / "player.gd", "class_name Player\nextends Node\n");
+
+    Database database((root.path / "scanner.sqlite3").string());
+    gotool::database::create_schema(database, 0);
+    database.exec(
+        "INSERT INTO projects ("
+        "id, project_uid, display_name, root_absolute_path, root_canonical_path, "
+        "project_file_absolute_path, godot_version, identity_source, first_seen_unix, last_seen_unix, "
+        "created_at_unix, updated_at_unix"
+        ") VALUES ("
+        "1, 'scanner-cancelled', 'scanner-cancelled', '" + root.path.generic_string() + "', '" +
+        root.path.generic_string() + "', '" + (root.path / "project.godot").generic_string() +
+        "', '4.6.0-stable', 'test', 1, 1, 1, 1"
+        ");"
+    );
+
+    std::atomic_bool cancel_requested = true;
+    NativeScanPipeline pipeline(database);
+    ScanOptions options;
+    options.project_id = 1;
+    options.project_root = root.path;
+    options.include_hidden = true;
+    options.persist_to_database = true;
+    options.cancel_requested = &cancel_requested;
+
+    const gotool::project_scanner::ScanResultSummary cancelled = pipeline.run(options);
+    CHECK(cancelled.status == "cancelled");
+    CHECK(cancelled.scan_run_id > 0);
+    CHECK(query_int64(database, "SELECT COUNT(*) FROM project_files WHERE project_id = 1;") == 0);
+    CHECK(query_int64(database, "SELECT COUNT(*) FROM project_scan_runs WHERE project_id = 1 AND status = 'cancelled';") == 1);
+}
+
+TEST_CASE("native_scan_pipeline_no_db_mode_returns_records_without_db_writes") {
+    TemporaryRoot root(make_temp_root("pipeline_no_db_mode"));
+    write_text(root.path / "project.godot", "[application]\n");
+    write_text(root.path / "scripts" / "player.gd", "class_name Player\nextends Node\n");
+
+    Database database((root.path / "scanner.sqlite3").string());
+    gotool::database::create_schema(database, 0);
+    database.exec(
+        "INSERT INTO projects ("
+        "id, project_uid, display_name, root_absolute_path, root_canonical_path, "
+        "project_file_absolute_path, godot_version, identity_source, first_seen_unix, last_seen_unix, "
+        "created_at_unix, updated_at_unix"
+        ") VALUES ("
+        "1, 'scanner-no-db', 'scanner-no-db', '" + root.path.generic_string() + "', '" +
+        root.path.generic_string() + "', '" + (root.path / "project.godot").generic_string() +
+        "', '4.6.0-stable', 'test', 1, 1, 1, 1"
+        ");"
+    );
+
+    NativeScanPipeline pipeline(database);
+    ScanOptions options;
+    options.project_id = 1;
+    options.project_root = root.path;
+    options.include_hidden = true;
+    options.persist_to_database = false;
+    options.collect_custom_classes = true;
+
+    const gotool::project_scanner::NativeScanResult result = pipeline.run_detailed(options);
+    CHECK(result.summary.scan_run_id == 0);
+    CHECK(result.summary.status == "completed");
+    CHECK_FALSE(result.records.empty());
+    CHECK(query_int64(database, "SELECT COUNT(*) FROM project_scan_runs WHERE project_id = 1;") == 0);
+    CHECK(query_int64(database, "SELECT COUNT(*) FROM project_files WHERE project_id = 1;") == 0);
 }

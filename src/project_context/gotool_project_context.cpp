@@ -3,6 +3,7 @@
 #include "database/gotool_project_inventory_repository.hpp"
 #include "database/gotool_project_registry_repository.hpp"
 #include "database/gotool_schema.hpp"
+#include "project_scanner/file_watcher.hpp"
 #include "project_scanner/native_scan_pipeline.hpp"
 
 #include <godot_cpp/classes/engine.hpp>
@@ -13,12 +14,17 @@
 #include <godot_cpp/variant/variant.hpp>
 
 #include <ctime>
+#include <cctype>
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <system_error>
+#include <thread>
+#include <unordered_map>
 #include <vector>
 
 namespace godot {
@@ -305,6 +311,100 @@ Dictionary scan_summary_to_dictionary(const gotool::project_scanner::ScanResultS
     return result;
 }
 
+std::string trim_ascii(std::string_view value) {
+    size_t begin = 0;
+    while (begin < value.size() && std::isspace(static_cast<unsigned char>(value[begin])) != 0) {
+        ++begin;
+    }
+
+    size_t end = value.size();
+    while (end > begin && std::isspace(static_cast<unsigned char>(value[end - 1])) != 0) {
+        --end;
+    }
+
+    return std::string(value.substr(begin, end - begin));
+}
+
+std::string trim_inline_comment(const std::string &value) {
+    const size_t comment = value.find(';');
+    if (comment == std::string::npos) {
+        return trim_ascii(value);
+    }
+    return trim_ascii(std::string_view(value).substr(0, comment));
+}
+
+std::string unquote(std::string value) {
+    if (value.size() >= 2) {
+        const char first = value.front();
+        const char last = value.back();
+        if ((first == '"' && last == '"') || (first == '\'' && last == '\'')) {
+            return value.substr(1, value.size() - 2);
+        }
+    }
+    return value;
+}
+
+struct ParsedAutoload {
+    std::string autoload_name;
+    std::string target_path;
+    bool is_singleton = false;
+};
+
+std::vector<ParsedAutoload> parse_project_autoloads(const std::filesystem::path &project_root) {
+    std::vector<ParsedAutoload> autoloads;
+    const std::filesystem::path project_file = project_root / "project.godot";
+
+    std::ifstream input(project_file, std::ios::in | std::ios::binary);
+    if (!input.is_open()) {
+        return autoloads;
+    }
+
+    bool in_autoload_section = false;
+    std::string line;
+    while (std::getline(input, line)) {
+        const std::string trimmed = trim_ascii(line);
+        if (trimmed.empty()) {
+            continue;
+        }
+
+        if (trimmed.front() == '[' && trimmed.back() == ']') {
+            in_autoload_section = (trimmed == "[autoload]");
+            continue;
+        }
+
+        if (!in_autoload_section || trimmed.front() == ';' || trimmed.front() == '#') {
+            continue;
+        }
+
+        const size_t separator = trimmed.find('=');
+        if (separator == std::string::npos) {
+            continue;
+        }
+
+        const std::string key = trim_ascii(std::string_view(trimmed).substr(0, separator));
+        std::string value = trim_inline_comment(trimmed.substr(separator + 1));
+        if (key.empty() || value.empty()) {
+            continue;
+        }
+
+        value = unquote(value);
+
+        ParsedAutoload entry;
+        entry.autoload_name = key;
+        entry.is_singleton = !value.empty() && value.front() == '*';
+        if (entry.is_singleton) {
+            value.erase(value.begin());
+        }
+
+        entry.target_path = trim_ascii(value);
+        if (!entry.target_path.empty()) {
+            autoloads.push_back(std::move(entry));
+        }
+    }
+
+    return autoloads;
+}
+
 } // namespace
 
 void GodotProjectContext::_bind_methods() {
@@ -356,6 +456,41 @@ void GodotProjectContext::_bind_methods() {
     ClassDB::bind_method(
         D_METHOD("get_scan_metrics", "scan_id"),
         &GodotProjectContext::get_scan_metrics
+    );
+
+    ClassDB::bind_method(
+        D_METHOD("scan_project_inventory_fast", "options"),
+        &GodotProjectContext::scan_project_inventory_fast
+    );
+
+    ClassDB::bind_method(
+        D_METHOD("scan_current_project_fast", "options"),
+        &GodotProjectContext::scan_current_project_fast
+    );
+
+    ClassDB::bind_method(
+        D_METHOD("start_watcher"),
+        &GodotProjectContext::start_watcher
+    );
+
+    ClassDB::bind_method(
+        D_METHOD("stop_watcher"),
+        &GodotProjectContext::stop_watcher
+    );
+
+    ClassDB::bind_method(
+        D_METHOD("get_watcher_status"),
+        &GodotProjectContext::get_watcher_status
+    );
+
+    ClassDB::bind_method(
+        D_METHOD("consume_watcher_changes"),
+        &GodotProjectContext::consume_watcher_changes
+    );
+
+    ClassDB::bind_method(
+        D_METHOD("get_dirty_paths"),
+        &GodotProjectContext::get_dirty_paths
     );
 
     ClassDB::bind_method(
@@ -414,7 +549,115 @@ void GodotProjectContext::_bind_methods() {
     );
 }
 
+GodotProjectContext::~GodotProjectContext() {
+    stop_scan_worker();
+    stop_watcher();
+}
+
+int64_t GodotProjectContext::current_unix_time() {
+    return static_cast<int64_t>(std::time(nullptr));
+}
+
+std::filesystem::path GodotProjectContext::get_current_project_root_path() const {
+    ProjectSettings *project_settings = ProjectSettings::get_singleton();
+    if (project_settings == nullptr) {
+        throw std::runtime_error("ProjectSettings singleton was not available.");
+    }
+
+    return normalize_absolute_path(
+        godot_string_to_path(project_settings->globalize_path("res://"))
+    );
+}
+
+void GodotProjectContext::join_finished_scan_worker_if_idle() {
+    std::thread worker_to_join;
+
+    {
+        std::lock_guard<std::mutex> lock(scan_mutex_);
+        if (!scan_worker_.joinable()) {
+            return;
+        }
+
+        const bool has_active = active_scan_state_ != nullptr;
+        const bool is_running =
+            has_active &&
+            (active_scan_state_->status == "queued" || active_scan_state_->status == "running");
+
+        if (!is_running) {
+            worker_to_join = std::move(scan_worker_);
+        }
+    }
+
+    if (worker_to_join.joinable()) {
+        worker_to_join.join();
+    }
+}
+
+void GodotProjectContext::stop_scan_worker() {
+    std::thread worker_to_join;
+
+    {
+        std::lock_guard<std::mutex> lock(scan_mutex_);
+
+        if (active_scan_state_ != nullptr &&
+            (active_scan_state_->status == "queued" || active_scan_state_->status == "running")) {
+            active_scan_state_->cancellation_requested.store(true, std::memory_order_relaxed);
+        }
+
+        if (scan_worker_.joinable()) {
+            worker_to_join = std::move(scan_worker_);
+        }
+    }
+
+    if (worker_to_join.joinable()) {
+        worker_to_join.join();
+    }
+
+    scan_cv_.notify_all();
+}
+
+Dictionary GodotProjectContext::active_state_to_summary_dictionary(const ActiveScanState &state) const {
+    const gotool::project_scanner::ScanResultSummary native_summary = {
+        state.scan_id,
+        state.scan_generation,
+        state.status,
+        state.metrics.files_seen,
+        state.metrics.dirs_seen,
+        state.metrics.entries_clean,
+        state.metrics.entries_dirty,
+        state.metrics.entries_new,
+        state.metrics.entries_deleted,
+        state.metrics.scripts_candidates,
+        state.metrics.scripts_parsed,
+        state.metrics.scripts_skipped_clean,
+        state.metrics.total_wall_ms
+    };
+
+    Dictionary merged = scan_summary_to_dictionary(native_summary);
+    merged["started_at_unix"] = state.started_at_unix;
+    merged["finished_at_unix"] = state.finished_at_unix;
+    merged["last_error"] = from_utf8(state.last_error);
+    return merged;
+}
+
+void GodotProjectContext::sync_last_scan_results_from_active_state() const {
+    std::lock_guard<std::mutex> lock(scan_mutex_);
+    if (active_scan_state_ == nullptr) {
+        return;
+    }
+
+    if (active_scan_state_->status == "queued" || active_scan_state_->status == "running") {
+        return;
+    }
+
+    last_scan_results_ = active_state_to_summary_dictionary(*active_scan_state_);
+    last_scan_results_["metrics"] = metrics_to_dictionary(active_scan_state_->metrics);
+    last_error_ = from_utf8(active_scan_state_->last_error);
+}
+
 bool GodotProjectContext::initialize_database() {
+    stop_scan_worker();
+
     last_error_ = "";
     current_project_id_ = 0;
     current_identity_source_ = "";
@@ -424,6 +667,7 @@ bool GodotProjectContext::initialize_database() {
 
     if (os == nullptr) {
         last_error_ = "OS singleton was not available.";
+        std::lock_guard<std::mutex> db_lock(database_mutex_);
         database_.reset();
         return false;
     }
@@ -432,6 +676,7 @@ bool GodotProjectContext::initialize_database() {
 
     if (project_settings == nullptr) {
         last_error_ = "ProjectSettings singleton was not available.";
+        std::lock_guard<std::mutex> db_lock(database_mutex_);
         database_.reset();
         return false;
     }
@@ -462,17 +707,21 @@ bool GodotProjectContext::initialize_database() {
         }
 
         const std::filesystem::path database_path = storage_root / "gotool_center.sqlite3";
-        database_ = std::make_unique<gotool::database::Database>(
-            to_utf8_from_u8(database_path.generic_u8string())
-        );
+        {
+            std::lock_guard<std::mutex> db_lock(database_mutex_);
+            database_ = std::make_unique<gotool::database::Database>(
+                to_utf8_from_u8(database_path.generic_u8string())
+            );
 
-        // First pass creates/ensures the v2 schema and projects table. Legacy migration
-        // is deferred until register_current_project() supplies a concrete project_id.
-        gotool::database::create_schema(*database_, 0);
+            // First pass creates/ensures the v2 schema and projects table. Legacy migration
+            // is deferred until register_current_project() supplies a concrete project_id.
+            gotool::database::create_schema(*database_, 0);
+        }
 
         const int64_t project_id = register_current_project();
 
         if (project_id <= 0) {
+            std::lock_guard<std::mutex> db_lock(database_mutex_);
             database_.reset();
             return false;
         }
@@ -494,6 +743,7 @@ bool GodotProjectContext::initialize_database() {
         return true;
     } catch (const std::exception &error) {
         last_error_ = error.what();
+        std::lock_guard<std::mutex> db_lock(database_mutex_);
         database_.reset();
         return false;
     }
@@ -502,10 +752,13 @@ bool GodotProjectContext::initialize_database() {
 int64_t GodotProjectContext::register_current_project() {
     last_error_ = "";
 
-    if (database_ == nullptr) {
-        last_error_ = "Database is not initialized. Call initialize_database() first.";
-        current_project_id_ = 0;
-        return 0;
+    {
+        std::lock_guard<std::mutex> db_lock(database_mutex_);
+        if (database_ == nullptr) {
+            last_error_ = "Database is not initialized. Call initialize_database() first.";
+            current_project_id_ = 0;
+            return 0;
+        }
     }
 
     ProjectSettings *project_settings = ProjectSettings::get_singleton();
@@ -609,11 +862,17 @@ int64_t GodotProjectContext::register_current_project() {
         registration_input.identity_warning = identity_warning;
         registration_input.observed_at_unix = static_cast<int64_t>(std::time(nullptr));
 
-        gotool::database::ProjectRegistryRepository registry(*database_);
-        const gotool::database::RegisteredProject registered_project =
-            registry.register_project(registration_input);
+        gotool::database::RegisteredProject registered_project;
+        {
+            std::lock_guard<std::mutex> db_lock(database_mutex_);
+            if (database_ == nullptr) {
+                throw std::runtime_error("Database is not initialized. Call initialize_database() first.");
+            }
 
-        gotool::database::create_schema(*database_, registered_project.project_id);
+            gotool::database::ProjectRegistryRepository registry(*database_);
+            registered_project = registry.register_project(registration_input);
+            gotool::database::create_schema(*database_, registered_project.project_id);
+        }
 
         current_project_id_ = registered_project.project_id;
         current_identity_source_ = from_utf8(registered_project.identity_source);
@@ -629,8 +888,36 @@ int64_t GodotProjectContext::register_current_project() {
 }
 
 bool GodotProjectContext::scan_current_project() {
-    const Dictionary result = start_scan(Dictionary());
-    return !result.is_empty() && String(result.get("status", "")) == "completed";
+    const Dictionary started = start_scan(Dictionary());
+    if (started.is_empty()) {
+        return false;
+    }
+
+    const int64_t scan_id = static_cast<int64_t>(started.get("scan_id", 0));
+    if (scan_id <= 0) {
+        return false;
+    }
+
+    std::unique_lock<std::mutex> lock(scan_mutex_);
+    scan_cv_.wait(lock, [this, scan_id]() {
+        if (active_scan_state_ == nullptr || active_scan_state_->scan_id != scan_id) {
+            return true;
+        }
+
+        return active_scan_state_->status != "queued" &&
+               active_scan_state_->status != "running";
+    });
+
+    const bool completed =
+        active_scan_state_ != nullptr &&
+        active_scan_state_->scan_id == scan_id &&
+        active_scan_state_->status == "completed";
+
+    lock.unlock();
+
+    join_finished_scan_worker_if_idle();
+    sync_last_scan_results_from_active_state();
+    return completed;
 }
 
 bool GodotProjectContext::scan_project() {
@@ -638,12 +925,16 @@ bool GodotProjectContext::scan_project() {
 }
 
 Dictionary GodotProjectContext::start_scan(const Dictionary &options) {
+    join_finished_scan_worker_if_idle();
     last_error_ = "";
 
-    if (database_ == nullptr) {
-        last_error_ = "Database is not initialized. Call initialize_database() first.";
-        last_scan_results_.clear();
-        return Dictionary();
+    {
+        std::lock_guard<std::mutex> db_lock(database_mutex_);
+        if (database_ == nullptr) {
+            last_error_ = "Database is not initialized. Call initialize_database() first.";
+            last_scan_results_.clear();
+            return Dictionary();
+        }
     }
 
     const int64_t project_id = register_current_project();
@@ -653,32 +944,149 @@ Dictionary GodotProjectContext::start_scan(const Dictionary &options) {
         return Dictionary();
     }
 
-    ProjectSettings *project_settings = ProjectSettings::get_singleton();
-
-    if (project_settings == nullptr) {
-        last_error_ = "ProjectSettings singleton was not available.";
-        last_scan_results_.clear();
-        return Dictionary();
-    }
-
     try {
-        gotool::project_scanner::ScanOptions scan_options;
-        scan_options.project_id = project_id;
-        scan_options.project_root = normalize_absolute_path(
-            godot_string_to_path(project_settings->globalize_path("res://"))
-        );
-        scan_options.include_hidden = static_cast<bool>(options.get("include_hidden", true));
-        scan_options.force_rescan = static_cast<bool>(options.get("force_rescan", false));
+        const bool include_hidden = static_cast<bool>(options.get("include_hidden", true));
+        const bool force_rescan = static_cast<bool>(options.get("force_rescan", false));
+        const bool include_custom_classes = static_cast<bool>(options.get("include_custom_classes", true));
+        const bool include_deleted = static_cast<bool>(options.get("include_deleted", false));
+        const std::filesystem::path project_root = get_current_project_root_path();
 
-        gotool::project_scanner::NativeScanPipeline pipeline(*database_);
-        const gotool::project_scanner::ScanResultSummary summary = pipeline.run(scan_options);
+        {
+            std::lock_guard<std::mutex> lock(scan_mutex_);
+            if (active_scan_state_ != nullptr &&
+                (active_scan_state_->status == "queued" || active_scan_state_->status == "running")) {
+                Dictionary already_running;
+                already_running["scan_id"] = active_scan_state_->scan_id;
+                already_running["scan_run_id"] = active_scan_state_->scan_id;
+                already_running["scan_generation"] = active_scan_state_->scan_generation;
+                already_running["status"] = "already_running";
+                already_running["active_status"] = from_utf8(active_scan_state_->status);
+                already_running["started_at_unix"] = active_scan_state_->started_at_unix;
+                return already_running;
+            }
+        }
 
-        last_scan_results_ = scan_summary_to_dictionary(summary);
-        last_scan_results_["metrics"] = metrics_to_dictionary(
-            gotool::project_scanner::ScanRepository(*database_).get_scan_metrics(project_id, summary.scan_run_id)
-        );
-        last_error_ = "";
-        return last_scan_results_;
+        const int64_t started_at_unix = current_unix_time();
+        int64_t scan_generation = 0;
+        int64_t scan_id = 0;
+
+        {
+            std::lock_guard<std::mutex> db_lock(database_mutex_);
+            if (database_ == nullptr) {
+                throw std::runtime_error("Database is not initialized. Call initialize_database() first.");
+            }
+
+            gotool::project_scanner::ScanRepository repository(*database_);
+            scan_generation = repository.next_generation(project_id);
+            scan_id = repository.create_scan_run(project_id, scan_generation, started_at_unix);
+        }
+
+        auto state = std::make_shared<ActiveScanState>();
+        state->scan_id = scan_id;
+        state->project_id = project_id;
+        state->scan_generation = scan_generation;
+        state->started_at_unix = started_at_unix;
+        state->status = "queued";
+
+        {
+            std::lock_guard<std::mutex> lock(scan_mutex_);
+            active_scan_state_ = state;
+        }
+
+        if (scan_worker_.joinable()) {
+            scan_worker_.join();
+        }
+
+        try {
+            scan_worker_ = std::thread(
+                [this,
+                 state,
+                 project_root,
+                 include_hidden,
+                 force_rescan,
+                 include_custom_classes,
+                 include_deleted]() {
+                {
+                    std::lock_guard<std::mutex> lock(scan_mutex_);
+                    if (active_scan_state_ == state) {
+                        active_scan_state_->status = "running";
+                    }
+                }
+                scan_cv_.notify_all();
+
+                try {
+                    gotool::project_scanner::ScanOptions scan_options;
+                    scan_options.project_id = state->project_id;
+                    scan_options.project_root = project_root;
+                    scan_options.cancel_requested = &state->cancellation_requested;
+                    scan_options.include_hidden = include_hidden;
+                    scan_options.force_rescan = force_rescan;
+                    scan_options.persist_to_database = true;
+                    scan_options.collect_custom_classes = include_custom_classes;
+                    scan_options.include_deleted = include_deleted;
+                    scan_options.scan_run_id = state->scan_id;
+                    scan_options.scan_generation = state->scan_generation;
+                    scan_options.started_at_unix = state->started_at_unix;
+
+                    gotool::project_scanner::NativeScanResult native_result;
+                    {
+                        std::lock_guard<std::mutex> db_lock(database_mutex_);
+                        if (database_ == nullptr) {
+                            throw std::runtime_error("Database was released while scan worker was running.");
+                        }
+                        gotool::project_scanner::NativeScanPipeline pipeline(*database_);
+                        native_result = pipeline.run_detailed(scan_options);
+                    }
+
+                    {
+                        std::lock_guard<std::mutex> lock(scan_mutex_);
+                        state->metrics = native_result.metrics;
+                        state->status = native_result.summary.status;
+                        state->finished_at_unix = current_unix_time();
+                        state->last_error.clear();
+                    }
+                } catch (const std::exception &error) {
+                    std::lock_guard<std::mutex> lock(scan_mutex_);
+                    state->status = "failed";
+                    state->finished_at_unix = current_unix_time();
+                    state->last_error = error.what();
+                    state->metrics.scan_result_status = "failed";
+                }
+
+                scan_cv_.notify_all();
+            }
+            );
+        } catch (const std::exception &error) {
+            gotool::project_scanner::ScanMetrics failed_metrics;
+            failed_metrics.scan_result_status = "failed";
+
+            {
+                std::lock_guard<std::mutex> db_lock(database_mutex_);
+                if (database_ != nullptr) {
+                    gotool::project_scanner::ScanRepository repository(*database_);
+                    repository.complete_scan_run(
+                        project_id,
+                        scan_id,
+                        scan_generation,
+                        failed_metrics,
+                        current_unix_time(),
+                        error.what()
+                    );
+                }
+            }
+
+            throw;
+        }
+
+        Dictionary started;
+        started["scan_id"] = scan_id;
+        started["scan_run_id"] = scan_id;
+        started["scan_generation"] = scan_generation;
+        started["status"] = "queued";
+        started["started_at_unix"] = started_at_unix;
+
+        last_scan_results_ = started;
+        return started;
     } catch (const std::exception &error) {
         last_error_ = error.what();
         last_scan_results_.clear();
@@ -687,21 +1095,62 @@ Dictionary GodotProjectContext::start_scan(const Dictionary &options) {
 }
 
 bool GodotProjectContext::cancel_scan(int64_t scan_id) {
-    (void)scan_id;
-    return false;
+    if (scan_id <= 0) {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(scan_mutex_);
+    if (active_scan_state_ == nullptr || active_scan_state_->scan_id != scan_id) {
+        return false;
+    }
+
+    if (active_scan_state_->status != "queued" && active_scan_state_->status != "running") {
+        return false;
+    }
+
+    active_scan_state_->cancellation_requested.store(true, std::memory_order_relaxed);
+    active_scan_state_->metrics.cancellation_requested = true;
+    return true;
 }
 
 Dictionary GodotProjectContext::get_scan_status(int64_t scan_id) const {
     Dictionary result;
 
-    if (database_ == nullptr || current_project_id_ <= 0 || scan_id <= 0) {
+    if (scan_id <= 0) {
         return result;
     }
 
+    {
+        std::lock_guard<std::mutex> lock(scan_mutex_);
+        if (active_scan_state_ != nullptr && active_scan_state_->scan_id == scan_id) {
+            result = active_state_to_summary_dictionary(*active_scan_state_);
+            result["metrics"] = metrics_to_dictionary(active_scan_state_->metrics);
+            if (active_scan_state_->status != "queued" && active_scan_state_->status != "running") {
+                last_scan_results_ = result;
+            }
+            return result;
+        }
+    }
+
+    if (database_ == nullptr || current_project_id_ <= 0) {
+        return Dictionary();
+    }
+
     try {
+        std::lock_guard<std::mutex> db_lock(database_mutex_);
+        if (database_ == nullptr) {
+            return Dictionary();
+        }
+
         gotool::project_scanner::ScanRepository repository(*database_);
+        const std::string status = repository.get_scan_status(current_project_id_, scan_id);
+        if (status.empty()) {
+            return Dictionary();
+        }
         result["scan_id"] = scan_id;
-        result["status"] = from_utf8(repository.get_scan_status(current_project_id_, scan_id));
+        result["scan_run_id"] = scan_id;
+        result["status"] = from_utf8(status);
+        result["metrics"] = metrics_to_dictionary(repository.get_scan_metrics(current_project_id_, scan_id));
     } catch (...) {
         return Dictionary();
     }
@@ -710,24 +1159,266 @@ Dictionary GodotProjectContext::get_scan_status(int64_t scan_id) const {
 }
 
 Dictionary GodotProjectContext::get_scan_metrics(int64_t scan_id) const {
-    if (database_ == nullptr || current_project_id_ <= 0 || scan_id <= 0) {
+    if (scan_id <= 0) {
+        return Dictionary();
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(scan_mutex_);
+        if (active_scan_state_ != nullptr && active_scan_state_->scan_id == scan_id) {
+            Dictionary metrics = metrics_to_dictionary(active_scan_state_->metrics);
+            metrics["scan_id"] = scan_id;
+            metrics["scan_run_id"] = scan_id;
+            metrics["status"] = from_utf8(active_scan_state_->status);
+            return metrics;
+        }
+    }
+
+    if (database_ == nullptr || current_project_id_ <= 0) {
         return Dictionary();
     }
 
     try {
+        std::lock_guard<std::mutex> db_lock(database_mutex_);
+        if (database_ == nullptr) {
+            return Dictionary();
+        }
+
         gotool::project_scanner::ScanRepository repository(*database_);
-        return metrics_to_dictionary(repository.get_scan_metrics(current_project_id_, scan_id));
+        Dictionary metrics = metrics_to_dictionary(repository.get_scan_metrics(current_project_id_, scan_id));
+        metrics["scan_id"] = scan_id;
+        metrics["scan_run_id"] = scan_id;
+        metrics["status"] = from_utf8(repository.get_scan_status(current_project_id_, scan_id));
+        return metrics;
     } catch (...) {
         return Dictionary();
     }
 }
 
+Dictionary GodotProjectContext::scan_project_inventory_fast(const Dictionary &options) {
+    last_error_ = "";
+
+    try {
+        const std::filesystem::path project_root = get_current_project_root_path();
+        const bool include_hidden = static_cast<bool>(options.get("include_hidden", true));
+        const bool include_custom_classes = static_cast<bool>(options.get("include_custom_classes", true));
+        const bool force_rescan = static_cast<bool>(options.get("force_rescan", false));
+        const int64_t max_results = static_cast<int64_t>(options.get("max_results", 0));
+
+        int64_t project_id = 0;
+        if (database_ != nullptr) {
+            const int64_t registered_project_id = register_current_project();
+            if (registered_project_id > 0) {
+                project_id = registered_project_id;
+            }
+        }
+
+        gotool::project_scanner::ScanOptions scan_options;
+        scan_options.project_id = project_id;
+        scan_options.project_root = project_root;
+        scan_options.include_hidden = include_hidden;
+        scan_options.force_rescan = force_rescan;
+        scan_options.persist_to_database = false;
+        scan_options.collect_custom_classes = include_custom_classes;
+        scan_options.result_limit = max_results;
+
+        gotool::project_scanner::NativeScanResult native_result;
+        bool ran_with_database = false;
+        if (database_ != nullptr && project_id > 0) {
+            std::lock_guard<std::mutex> db_lock(database_mutex_);
+            if (database_ != nullptr) {
+                gotool::project_scanner::NativeScanPipeline pipeline(*database_);
+                native_result = pipeline.run_detailed(scan_options);
+                ran_with_database = true;
+            }
+        }
+
+        if (!ran_with_database) {
+            gotool::project_scanner::NativeScanPipeline pipeline;
+            native_result = pipeline.run_detailed(scan_options);
+        }
+
+        Array files;
+        for (const gotool::project_scanner::EntryRecord &record : native_result.records) {
+            const std::string project_path =
+                native_result.arena.string_at(record.path_offset, record.path_length);
+            const std::string file_name =
+                native_result.arena.string_at(record.name_offset, record.name_length);
+            const std::filesystem::path absolute_path =
+                (project_root / std::filesystem::u8path(project_path)).lexically_normal();
+
+            Dictionary row;
+            row["path"] = from_utf8("res://" + project_path);
+            row["name"] = from_utf8(file_name);
+            row["type"] = record.entry_kind == gotool::project_scanner::EntryKind::Directory ? "folder" : "file";
+            row["project_relative_path"] = from_utf8(project_path);
+            row["absolute_path"] = from_utf8(to_utf8_from_u8(absolute_path.generic_u8string()));
+            row["file_name"] = from_utf8(file_name);
+            row["extension"] = from_utf8(gotool::project_scanner::extension_from_path(project_path));
+            row["file_type"] = from_utf8(gotool::project_scanner::to_string(record.file_type_id));
+            row["godot_type"] = from_utf8(gotool::project_scanner::to_string(record.godot_type_hint));
+            row["size_bytes"] = record.size_bytes;
+            row["modified_time_unix"] = record.modified_time_ns / 1'000'000'000LL;
+            row["modified_time_ns"] = record.modified_time_ns;
+            row["is_directory"] = record.entry_kind == gotool::project_scanner::EntryKind::Directory;
+            row["is_hidden"] = record.is_hidden();
+            row["dirty_state"] = from_utf8(gotool::project_scanner::to_string(record.dirty_state));
+            row["dirty_reason"] = from_utf8(gotool::project_scanner::to_string(record.dirty_reason));
+            files.append(row);
+        }
+
+        Array custom_classes;
+        if (include_custom_classes) {
+            for (const gotool::project_scanner::ParsedScriptRecord &parsed : native_result.parsed_scripts) {
+                if (parsed.parse_result.status != gotool::project_scanner::ParseStatus::ParsedClass ||
+                    parsed.parse_result.class_name.empty()) {
+                    continue;
+                }
+
+                const std::string direct_base = parsed.parse_result.direct_base_type;
+                Dictionary row;
+                row["class_name"] = from_utf8(parsed.parse_result.class_name);
+                row["script_path"] = from_utf8("res://" + parsed.project_relative_path);
+                row["script_project_relative_path"] = from_utf8(parsed.project_relative_path);
+                row["language"] = from_utf8(gotool::project_scanner::to_string(parsed.parse_result.language));
+                row["base_type"] = from_utf8(direct_base);
+                row["direct_base_type"] = from_utf8(direct_base);
+                row["is_resource_type"] = gotool::project_scanner::is_builtin_resource_type_hint(direct_base);
+                row["is_node_type"] = gotool::project_scanner::is_builtin_node_type_hint(direct_base);
+                row["parser_version"] = gotool::project_scanner::PARSER_VERSION;
+                row["parse_status"] = from_utf8(gotool::project_scanner::to_string(parsed.parse_result.status));
+                row["parse_error"] = from_utf8(parsed.parse_result.parse_error);
+                row["last_parsed_generation"] = native_result.summary.scan_generation;
+                custom_classes.append(row);
+            }
+        }
+
+        Array autoloads;
+        const std::vector<ParsedAutoload> parsed_autoloads = parse_project_autoloads(project_root);
+        for (const ParsedAutoload &autoload : parsed_autoloads) {
+            Dictionary row;
+            row["autoload_name"] = from_utf8(autoload.autoload_name);
+            row["target_path"] = from_utf8(autoload.target_path);
+            row["target_project_relative_path"] =
+                from_utf8(gotool::project_scanner::normalize_project_path(autoload.target_path));
+            row["is_singleton"] = autoload.is_singleton;
+            autoloads.append(row);
+        }
+
+        Dictionary inventory;
+        inventory["files"] = files;
+        inventory["autoloads"] = autoloads;
+        inventory["custom_classes"] = custom_classes;
+        inventory["metrics"] = metrics_to_dictionary(native_result.metrics);
+        inventory["scan_summary"] = scan_summary_to_dictionary(native_result.summary);
+        last_error_ = "";
+        return inventory;
+    } catch (const std::exception &error) {
+        last_error_ = error.what();
+        return Dictionary();
+    }
+}
+
+Dictionary GodotProjectContext::scan_current_project_fast(const Dictionary &options) {
+    return scan_project_inventory_fast(options);
+}
+
+bool GodotProjectContext::start_watcher() {
+    last_error_ = "";
+
+    try {
+        const std::filesystem::path project_root = get_current_project_root_path();
+        std::lock_guard<std::mutex> lock(watcher_mutex_);
+        if (file_watcher_ == nullptr) {
+            file_watcher_ = std::make_unique<gotool::project_scanner::FileWatcher>();
+        }
+
+        const bool started = file_watcher_->start(project_root);
+        if (!started) {
+            const gotool::project_scanner::FileWatcherStatus status = file_watcher_->get_status();
+            if (!status.last_error.empty()) {
+                last_error_ = from_utf8(status.last_error);
+            }
+        }
+        return started;
+    } catch (const std::exception &error) {
+        last_error_ = error.what();
+        return false;
+    }
+}
+
+void GodotProjectContext::stop_watcher() {
+    std::lock_guard<std::mutex> lock(watcher_mutex_);
+    if (file_watcher_ != nullptr) {
+        file_watcher_->stop();
+    }
+}
+
+Dictionary GodotProjectContext::get_watcher_status() const {
+    Dictionary status;
+
+    std::lock_guard<std::mutex> lock(watcher_mutex_);
+    if (file_watcher_ == nullptr) {
+        status["running"] = false;
+        status["supported"] = false;
+        status["requires_full_rescan"] = true;
+        status["backend"] = "none";
+        status["pending_events"] = 0;
+        return status;
+    }
+
+    const gotool::project_scanner::FileWatcherStatus watcher_status = file_watcher_->get_status();
+    status["running"] = watcher_status.running;
+    status["supported"] = watcher_status.supported;
+    status["requires_full_rescan"] = watcher_status.requires_full_rescan;
+    status["backend"] = from_utf8(watcher_status.backend);
+    status["last_error"] = from_utf8(watcher_status.last_error);
+    status["pending_events"] = watcher_status.pending_events;
+    return status;
+}
+
+Array GodotProjectContext::consume_watcher_changes() {
+    Array events;
+
+    std::lock_guard<std::mutex> lock(watcher_mutex_);
+    if (file_watcher_ == nullptr) {
+        return events;
+    }
+
+    const std::vector<gotool::project_scanner::FileWatcherEvent> drained = file_watcher_->drain_events();
+    for (const gotool::project_scanner::FileWatcherEvent &event : drained) {
+        Dictionary row;
+        row["project_relative_path"] = from_utf8(event.project_relative_path);
+        row["path"] = from_utf8("res://" + event.project_relative_path);
+        row["removed"] = event.removed;
+        row["is_directory"] = event.is_directory;
+        events.append(row);
+    }
+
+    return events;
+}
+
+Array GodotProjectContext::get_dirty_paths() {
+    Array dirty_paths;
+    const Array changes = consume_watcher_changes();
+    for (int64_t i = 0; i < changes.size(); ++i) {
+        const Dictionary change = changes[i];
+        dirty_paths.append(change.get("path", ""));
+    }
+    return dirty_paths;
+}
+
 int64_t GodotProjectContext::get_file_count(const Dictionary &filter) const {
+    sync_last_scan_results_from_active_state();
     if (database_ == nullptr || current_project_id_ <= 0) {
         return 0;
     }
 
     try {
+        std::lock_guard<std::mutex> db_lock(database_mutex_);
+        if (database_ == nullptr) {
+            return 0;
+        }
         gotool::project_scanner::ScanRepository repository(*database_);
         return repository.count_files(current_project_id_, file_query_from_dictionary(filter));
     } catch (...) {
@@ -743,11 +1434,18 @@ Array GodotProjectContext::get_files_page(
 ) const {
     Array rows;
 
+    sync_last_scan_results_from_active_state();
+
     if (database_ == nullptr || current_project_id_ <= 0) {
         return rows;
     }
 
     try {
+        std::lock_guard<std::mutex> db_lock(database_mutex_);
+        if (database_ == nullptr) {
+            return Array();
+        }
+
         gotool::project_scanner::ScanRepository repository(*database_);
         const std::vector<gotool::project_scanner::FileRow> page = repository.list_files(
             current_project_id_,
@@ -768,11 +1466,18 @@ Array GodotProjectContext::get_files_page(
 }
 
 Dictionary GodotProjectContext::get_file_details(int64_t file_id) const {
+    sync_last_scan_results_from_active_state();
+
     if (database_ == nullptr || current_project_id_ <= 0 || file_id <= 0) {
         return Dictionary();
     }
 
     try {
+        std::lock_guard<std::mutex> db_lock(database_mutex_);
+        if (database_ == nullptr) {
+            return Dictionary();
+        }
+
         gotool::project_scanner::ScanRepository repository(*database_);
         const std::optional<gotool::project_scanner::FileRow> row =
             repository.get_file_details(current_project_id_, file_id);
@@ -798,11 +1503,18 @@ Array GodotProjectContext::get_directory_children(
 }
 
 int64_t GodotProjectContext::get_custom_class_count(const Dictionary &filter) const {
+    sync_last_scan_results_from_active_state();
+
     if (database_ == nullptr || current_project_id_ <= 0) {
         return 0;
     }
 
     try {
+        std::lock_guard<std::mutex> db_lock(database_mutex_);
+        if (database_ == nullptr) {
+            return 0;
+        }
+
         gotool::project_scanner::ScanRepository repository(*database_);
         return repository.count_custom_classes(current_project_id_, custom_class_query_from_dictionary(filter));
     } catch (...) {
@@ -818,11 +1530,18 @@ Array GodotProjectContext::get_custom_classes_page(
 ) const {
     Array rows;
 
+    sync_last_scan_results_from_active_state();
+
     if (database_ == nullptr || current_project_id_ <= 0) {
         return rows;
     }
 
     try {
+        std::lock_guard<std::mutex> db_lock(database_mutex_);
+        if (database_ == nullptr) {
+            return Array();
+        }
+
         gotool::project_scanner::ScanRepository repository(*database_);
         const std::vector<gotool::project_scanner::CustomClassRow> page = repository.list_custom_classes(
             current_project_id_,
@@ -879,11 +1598,18 @@ Dictionary GodotProjectContext::export_full_inventory_for_debug() const {
 Array GodotProjectContext::list_projects() const {
     Array projects;
 
+    sync_last_scan_results_from_active_state();
+
     if (database_ == nullptr) {
         return projects;
     }
 
     try {
+        std::lock_guard<std::mutex> db_lock(database_mutex_);
+        if (database_ == nullptr) {
+            return projects;
+        }
+
         gotool::database::ProjectRegistryRepository registry(*database_);
         const std::vector<gotool::database::ProjectListItem> items = registry.list_projects();
 
@@ -900,11 +1626,18 @@ Array GodotProjectContext::list_projects() const {
 Dictionary GodotProjectContext::get_project_summary(int64_t project_id) const {
     Dictionary summary;
 
+    sync_last_scan_results_from_active_state();
+
     if (database_ == nullptr || project_id <= 0) {
         return summary;
     }
 
     try {
+        std::lock_guard<std::mutex> db_lock(database_mutex_);
+        if (database_ == nullptr) {
+            return Dictionary();
+        }
+
         gotool::database::ProjectRegistryRepository registry(*database_);
         const std::optional<gotool::database::ProjectSummary> project_summary =
             registry.get_project_summary(project_id);
@@ -936,10 +1669,12 @@ String GodotProjectContext::get_database_absolute_path() const {
 }
 
 Dictionary GodotProjectContext::get_last_scan_results() const {
+    sync_last_scan_results_from_active_state();
     return last_scan_results_;
 }
 
 String GodotProjectContext::get_last_error() const {
+    sync_last_scan_results_from_active_state();
     return last_error_;
 }
 

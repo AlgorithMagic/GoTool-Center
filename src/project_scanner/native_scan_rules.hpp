@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
@@ -142,8 +143,16 @@ struct ScanMetrics {
 struct ScanOptions {
     int64_t project_id = 0;
     std::filesystem::path project_root;
+    const std::atomic_bool *cancel_requested = nullptr;
     bool include_hidden = true;
     bool force_rescan = false;
+    bool persist_to_database = true;
+    bool collect_custom_classes = true;
+    bool include_deleted = false;
+    int64_t result_limit = 0;
+    int64_t scan_run_id = 0;
+    ScanGeneration scan_generation = 0;
+    int64_t started_at_unix = 0;
     int64_t batch_size = 1000;
 };
 

@@ -51,6 +51,12 @@ BIN_DIR.mkdir(parents=True, exist_ok=True)
 
 env = SConscript(str(GODOT_CPP_SCONSTRUCT))
 
+existing_cxxflags = [str(flag) for flag in env.get("CXXFLAGS", [])]
+if platform == "windows":
+    env["CXXFLAGS"] = [flag for flag in existing_cxxflags if not flag.startswith("/std:")]
+else:
+    env["CXXFLAGS"] = [flag for flag in existing_cxxflags if not flag.startswith("-std=")]
+
 env.AppendUnique(CPPPATH=[
     "src",
     "third-party/sqlite3",
@@ -89,17 +95,22 @@ sqlite_env = env.Clone()
 
 if platform == "windows":
     sqlite_env.AppendUnique(CCFLAGS=[
+        "/std:c17",
+    ])
+    sqlite_env.AppendUnique(CCFLAGS=[
         "/wd4090",
         "/wd4996",
     ])
 elif platform == "linux":
     sqlite_env.AppendUnique(CCFLAGS=[
+        "-std=c17",
         "-Wno-discarded-qualifiers",
         "-Wno-unused-parameter",
         "-Wno-unused-variable",
     ])
 elif platform == "macos":
     sqlite_env.AppendUnique(CCFLAGS=[
+        "-std=c17",
         "-Wno-incompatible-pointer-types-discards-qualifiers",
         "-Wno-unused-parameter",
         "-Wno-unused-variable",
