@@ -13,7 +13,7 @@ namespace gotool::project_scanner {
 using ScanGeneration = int64_t;
 
 static constexpr int64_t PARSER_VERSION = 1;
-static constexpr int64_t CLASSIFIER_VERSION = 1;
+static constexpr int64_t CLASSIFIER_VERSION = 2;
 static constexpr int64_t SCANNER_SCHEMA_VERSION = 4;
 
 enum class EntryKind : uint8_t {
@@ -30,9 +30,14 @@ enum class FileTypeId : uint16_t {
     Shader,
     Asset,
     Config,
+    GodotImportMetadata,
+    GodotImportHash,
+    GodotShaderCache,
+    GodotEditorMetadata,
     Data,
     GeneratedArtifact,
     SourceArt,
+    ColorPalette,
     SourceCode,
     Documentation,
     Image,
@@ -41,6 +46,10 @@ enum class FileTypeId : uint16_t {
     Video,
     Font,
     Model,
+    ModelBackup,
+    ModelCache,
+    MaterialSource,
+    BinaryData,
     Archive,
     Database,
     BuildArtifact

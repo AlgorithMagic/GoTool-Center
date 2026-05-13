@@ -114,6 +114,25 @@ TEST_CASE("extension_extraction_and_classification_are_cheap") {
     CHECK(gotool::project_scanner::detect_godot_type_hint("icon.png", FileTypeId::Asset) == GodotTypeHint::Texture2D);
 }
 
+TEST_CASE("extension_classification_handles_metadata_and_source_artifacts") {
+    CHECK(gotool::project_scanner::classify_entry("tests/fixtures/type_probe_extensions/palette.ase", EntryKind::File) == FileTypeId::ColorPalette);
+    CHECK(gotool::project_scanner::classify_entry("tests/fixtures/type_probe_extensions/sprite.aseprite", EntryKind::File) == FileTypeId::SourceArt);
+    CHECK(gotool::project_scanner::classify_entry("tests/fixtures/type_probe_extensions/backup.blend1", EntryKind::File) == FileTypeId::ModelBackup);
+    CHECK(gotool::project_scanner::classify_entry("tests/fixtures/type_probe_extensions/blob.bin", EntryKind::File) == FileTypeId::BinaryData);
+    CHECK(gotool::project_scanner::classify_entry("tests/fixtures/type_probe_extensions/image.exr", EntryKind::File) == FileTypeId::Image);
+    CHECK(gotool::project_scanner::classify_entry("tests/fixtures/type_probe_extensions/mesh.assbin", EntryKind::File) == FileTypeId::ModelCache);
+    CHECK(gotool::project_scanner::classify_entry("tests/fixtures/type_probe_extensions/material.spp", EntryKind::File) == FileTypeId::MaterialSource);
+    CHECK(gotool::project_scanner::classify_entry("tests/fixtures/type_probe_extensions/editor.node", EntryKind::File) == FileTypeId::GodotEditorMetadata);
+    CHECK(gotool::project_scanner::classify_entry("tests/fixtures/type_probe_extensions/meta.import", EntryKind::File) == FileTypeId::GodotImportMetadata);
+
+    CHECK(gotool::project_scanner::classify_entry(".godot/imported/type_probe.md5", EntryKind::File) == FileTypeId::GodotImportHash);
+    CHECK(gotool::project_scanner::classify_entry(".godot/shader_cache/type_probe.cache", EntryKind::File) == FileTypeId::GodotShaderCache);
+
+    CHECK(gotool::project_scanner::detect_godot_type_hint("tests/fixtures/type_probe_extensions/meta.import", FileTypeId::GodotImportMetadata) == GodotTypeHint::NotGodotTyped);
+    CHECK(gotool::project_scanner::detect_godot_type_hint("tests/fixtures/type_probe_extensions/editor.node", FileTypeId::GodotEditorMetadata) == GodotTypeHint::NotGodotTyped);
+    CHECK(gotool::project_scanner::detect_godot_type_hint("tests/fixtures/type_probe_extensions/image.exr", FileTypeId::Image) == GodotTypeHint::NotGodotTyped);
+}
+
 TEST_CASE("dirty_detector_reports_clean_and_metadata_changes") {
     CHECK(
         gotool::project_scanner::detect_dirty_state(

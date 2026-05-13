@@ -235,7 +235,24 @@ FileTypeId classify_entry(std::string_view project_relative_path, EntryKind kind
     if (matches_any(extension, { ".gdshader", ".gdshaderinc", ".shader" })) {
         return FileTypeId::Shader;
     }
-    if (matches_any(extension, { ".cfg", ".ini", ".conf", ".config", ".import", ".godot", ".uid", ".gdextension" }) ||
+
+    if (starts_with(path, ".godot/imported/") && extension == ".md5") {
+        return FileTypeId::GodotImportHash;
+    }
+
+    if (starts_with(path, ".godot/shader_cache/") && extension == ".cache") {
+        return FileTypeId::GodotShaderCache;
+    }
+
+    if (extension == ".import") {
+        return FileTypeId::GodotImportMetadata;
+    }
+
+    if (matches_any(extension, { ".node", ".object", ".resource" })) {
+        return FileTypeId::GodotEditorMetadata;
+    }
+
+    if (matches_any(extension, { ".cfg", ".ini", ".conf", ".config", ".godot", ".uid", ".gdextension" }) ||
         matches_any(name, { "plugin.cfg", "project.godot", ".editorconfig", ".gitignore", ".gitattributes" })) {
         return FileTypeId::Config;
     }
@@ -245,12 +262,26 @@ FileTypeId classify_entry(std::string_view project_relative_path, EntryKind kind
     if (matches_any(extension, { ".png", ".jpg", ".jpeg", ".webp", ".svg", ".bmp", ".gif", ".tga" })) {
         return FileTypeId::Asset;
     }
+
+    if (extension == ".exr") {
+        return FileTypeId::Image;
+    }
+
     if (matches_any(extension, { ".wav", ".mp3", ".ogg", ".opus", ".flac" })) {
         return FileTypeId::Audio;
     }
     if (matches_any(extension, { ".ttf", ".otf", ".fnt", ".woff", ".woff2" })) {
         return FileTypeId::Font;
     }
+
+    if (extension == ".blend1" || extension == ".blend2") {
+        return FileTypeId::ModelBackup;
+    }
+
+    if (extension == ".assbin") {
+        return FileTypeId::ModelCache;
+    }
+
     if (matches_any(extension, { ".glb", ".gltf", ".fbx", ".obj", ".dae", ".blend" })) {
         return FileTypeId::Model;
     }
@@ -266,12 +297,26 @@ FileTypeId classify_entry(std::string_view project_relative_path, EntryKind kind
     if (matches_any(extension, { ".txt", ".md", ".rst", ".adoc" })) {
         return FileTypeId::Documentation;
     }
+
+    if (extension == ".ase") {
+        return FileTypeId::ColorPalette;
+    }
+
     if (matches_any(extension, { ".c", ".h", ".cpp", ".hpp", ".py", ".js", ".ts", ".rs", ".go", ".java" })) {
         return FileTypeId::SourceCode;
     }
     if (matches_any(extension, { ".xcf", ".psd", ".aseprite", ".kra" })) {
         return FileTypeId::SourceArt;
     }
+
+    if (extension == ".spp") {
+        return FileTypeId::MaterialSource;
+    }
+
+    if (extension == ".bin") {
+        return FileTypeId::BinaryData;
+    }
+
     if (ends_with_any(name, { ".x86_64" })) {
         return FileTypeId::GeneratedArtifact;
     }
@@ -330,7 +375,7 @@ GodotTypeHint detect_godot_type_hint(std::string_view project_relative_path, Fil
     if (extension == ".uid") {
         return GodotTypeHint::ResourceUID;
     }
-    if (matches_any(extension, { ".cfg", ".ini", ".conf", ".config", ".import", ".remap" }) || name == "plugin.cfg") {
+    if (matches_any(extension, { ".cfg", ".ini", ".conf", ".config", ".remap" }) || name == "plugin.cfg") {
         return GodotTypeHint::ConfigFile;
     }
     if (name == "project.godot") {
@@ -451,9 +496,14 @@ const char *to_string(FileTypeId value) {
         case FileTypeId::Shader: return "Shader";
         case FileTypeId::Asset: return "Asset";
         case FileTypeId::Config: return "Config";
+        case FileTypeId::GodotImportMetadata: return "GodotImportMetadata";
+        case FileTypeId::GodotImportHash: return "GodotImportHash";
+        case FileTypeId::GodotShaderCache: return "GodotShaderCache";
+        case FileTypeId::GodotEditorMetadata: return "GodotEditorMetadata";
         case FileTypeId::Data: return "Data";
         case FileTypeId::GeneratedArtifact: return "GeneratedArtifact";
         case FileTypeId::SourceArt: return "SourceArt";
+        case FileTypeId::ColorPalette: return "ColorPalette";
         case FileTypeId::SourceCode: return "SourceCode";
         case FileTypeId::Documentation: return "Documentation";
         case FileTypeId::Image: return "Image";
@@ -462,6 +512,10 @@ const char *to_string(FileTypeId value) {
         case FileTypeId::Video: return "Video";
         case FileTypeId::Font: return "Font";
         case FileTypeId::Model: return "Model";
+        case FileTypeId::ModelBackup: return "ModelBackup";
+        case FileTypeId::ModelCache: return "ModelCache";
+        case FileTypeId::MaterialSource: return "MaterialSource";
+        case FileTypeId::BinaryData: return "BinaryData";
         case FileTypeId::Archive: return "Archive";
         case FileTypeId::Database: return "Database";
         case FileTypeId::BuildArtifact: return "BuildArtifact";
