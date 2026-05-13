@@ -368,7 +368,11 @@ godot::String classify_file_type_from_facts(const FileFacts &facts) {
         return "Asset";
     }
 
-    if (extension == ".import" || extension == ".godot") {
+    if (extension == ".import") {
+        return "GodotImportMetadata";
+    }
+
+    if (extension == ".godot") {
         return "Config";
     }
 
@@ -516,10 +520,6 @@ godot::String classify_file_type_from_facts(const FileFacts &facts) {
 
     if (matches_suffix_any(lower_name, { ".uid" })) {
         return "GodotResourceUID";
-    }
-
-    if (matches_suffix_any(lower_name, { ".import" })) {
-        return "GodotImportMetadata";
     }
 
     if (matches_suffix_any(lower_name, { ".ctex" })) {
@@ -679,8 +679,12 @@ godot::String classify_file_type_from_facts(const FileFacts &facts) {
         return "Texture";
     }
 
+    if (matches_suffix_any(lower_name, { ".ase" })) {
+        return "ColorPalette";
+    }
+
     if (matches_suffix_any(lower_name, {
-            ".ase", ".aseprite", ".psd", ".psb", ".kra", ".ora", ".xcf", ".clip", ".clipstudiopaint",
+            ".aseprite", ".psd", ".psb", ".kra", ".ora", ".xcf", ".clip", ".clipstudiopaint",
             ".sai", ".sai2", ".mdp", ".pdn", ".afphoto", ".afdesign", ".cpt", ".procreate",
             ".sketch", ".figma"
         })) {
@@ -783,7 +787,7 @@ godot::String classify_file_type_from_facts(const FileFacts &facts) {
         return "Material";
     }
 
-    if (matches_suffix_any(lower_name, { ".abc" })) {
+    if (matches_suffix_any(lower_name, { ".abc", ".assbin" })) {
         return "ModelCache";
     }
 
@@ -799,7 +803,7 @@ godot::String classify_file_type_from_facts(const FileFacts &facts) {
         return "AvatarModel";
     }
 
-    if (matches_suffix_any(lower_name, { ".mat", ".sbs", ".sbsar" })) {
+    if (matches_suffix_any(lower_name, { ".mat", ".sbs", ".sbsar", ".spp" })) {
         return "MaterialSource";
     }
 
@@ -1119,10 +1123,6 @@ godot::String detect_godot_type_from_facts(const FileFacts &facts, const godot::
         return "ResourceUID";
     }
 
-    if (extension == ".import") {
-        return "ConfigFile";
-    }
-
     if (extension == ".ctex") {
         return "CompressedTexture2D";
     }
@@ -1149,7 +1149,7 @@ godot::String detect_godot_type_from_facts(const FileFacts &facts, const godot::
 
     if (is_godot_editor_path(lower_path)) {
         if (extension == ".node") {
-            return "Node";
+            return NOT_GODOT_TYPED;
         }
 
         if (extension == ".object") {
@@ -1187,7 +1187,6 @@ godot::String detect_godot_type_from_facts(const FileFacts &facts, const godot::
         extension == ".bmp" ||
         extension == ".gif" ||
         extension == ".svg" ||
-        extension == ".exr" ||
         extension == ".hdr") {
         return "Texture2D";
     }

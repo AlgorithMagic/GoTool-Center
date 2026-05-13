@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 namespace gotool::database {
 
@@ -26,8 +27,13 @@ public:
 
     void bind_int64(int index, int64_t value);
     void bind_text(int index, const std::string &value);
+    void bind_text(int index, const char *value);
+    void bind_text(int index, std::string_view value);
+    void bind_null(int index);
     StepResult step();
     void step_done();
+    void reset();
+    void clear_bindings();
     bool column_is_null(int index) const;
     int64_t column_int64(int index) const;
     std::string column_text(int index) const;
@@ -57,6 +63,7 @@ public:
     void rollback_transaction() noexcept;
 
     int64_t last_insert_row_id() const;
+    int64_t changes() const;
 
 private:
     sqlite3* db_ = nullptr;

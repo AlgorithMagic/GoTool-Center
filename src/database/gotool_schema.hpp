@@ -4,7 +4,7 @@
 
 namespace gotool::database {
 
-static constexpr int64_t GOTOOL_SCHEMA_VERSION = 2;
+static constexpr int64_t GOTOOL_SCHEMA_VERSION = 4;
 
 void create_schema(Database &database, int64_t legacy_project_id = 0);
 

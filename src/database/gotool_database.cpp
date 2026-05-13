@@ -83,15 +83,28 @@ void Statement::bind_int64(int index, int64_t value) {
 }
 
 void Statement::bind_text(int index, const std::string &value) {
+    bind_text(index, std::string_view(value));
+}
+
+void Statement::bind_text(int index, const char *value) {
+    bind_text(index, std::string_view(value != nullptr ? value : ""));
+}
+
+void Statement::bind_text(int index, std::string_view value) {
     const int code = sqlite3_bind_text(
         stmt_,
         index,
-        value.c_str(),
+        value.data(),
         static_cast<int>(value.size()),
         SQLITE_TRANSIENT
     );
 
     ensure_sqlite_ok(db_, code, "Failed to bind sqlite text parameter");
+}
+
+void Statement::bind_null(int index) {
+    const int code = sqlite3_bind_null(stmt_, index);
+    ensure_sqlite_ok(db_, code, "Failed to bind sqlite null parameter");
 }
 
 Statement::StepResult Statement::step() {
@@ -112,6 +125,16 @@ void Statement::step_done() {
     if (step() != StepResult::Done) {
         throw std::runtime_error("Expected sqlite statement to finish with SQLITE_DONE but received a row.");
     }
+}
+
+void Statement::reset() {
+    const int code = sqlite3_reset(stmt_);
+    ensure_sqlite_ok(db_, code, "Failed to reset sqlite statement");
+}
+
+void Statement::clear_bindings() {
+    const int code = sqlite3_clear_bindings(stmt_);
+    ensure_sqlite_ok(db_, code, "Failed to clear sqlite statement bindings");
 }
 
 bool Statement::column_is_null(int index) const {
@@ -166,6 +189,8 @@ Database::Database(const std::string &database_path) {
 
     exec("PRAGMA foreign_keys = ON;");
     exec("PRAGMA journal_mode = WAL;");
+    exec("PRAGMA synchronous = NORMAL;");
+    exec("PRAGMA temp_store = MEMORY;");
     exec("PRAGMA busy_timeout = 5000;");
 }
 
@@ -235,6 +260,14 @@ int64_t Database::last_insert_row_id() const {
     }
 
     return sqlite3_last_insert_rowid(db_);
+}
+
+int64_t Database::changes() const {
+    if (db_ == nullptr) {
+        return 0;
+    }
+
+    return sqlite3_changes64(db_);
 }
 
 Transaction::Transaction(Database &database) :

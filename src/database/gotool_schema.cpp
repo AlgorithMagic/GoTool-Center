@@ -42,6 +42,18 @@ bool table_has_column(Database &database, const std::string &table_name, const s
     return false;
 }
 
+void add_column_if_missing(Database &database, const std::string &table_name, const std::string &column_sql) {
+    const size_t first_space = column_sql.find(' ');
+    if (first_space == std::string::npos) {
+        throw std::runtime_error("Column SQL must start with a column name.");
+    }
+
+    const std::string column_name = column_sql.substr(0, first_space);
+    if (!table_has_column(database, table_name, column_name)) {
+        database.exec("ALTER TABLE " + table_name + " ADD COLUMN " + column_sql + ";");
+    }
+}
+
 void create_projects_table(Database &database) {
     database.exec(R"sql(
         CREATE TABLE IF NOT EXISTS projects (
@@ -87,6 +99,7 @@ void create_schema_v2_tables(Database &database) {
             files_found INTEGER NOT NULL DEFAULT 0,
             folders_found INTEGER NOT NULL DEFAULT 0,
             error_message TEXT,
+            scan_generation INTEGER NOT NULL DEFAULT 0,
             FOREIGN KEY (project_id)
                 REFERENCES projects(id)
                 ON DELETE CASCADE
@@ -108,6 +121,22 @@ void create_schema_v2_tables(Database &database) {
             modified_time_unix INTEGER,
             is_directory INTEGER NOT NULL DEFAULT 0,
             is_hidden INTEGER NOT NULL DEFAULT 0,
+            parent_id INTEGER NOT NULL DEFAULT 0,
+            entry_kind TEXT NOT NULL DEFAULT 'file',
+            godot_type_hint TEXT NOT NULL DEFAULT 'NGT',
+            type_hint_source TEXT NOT NULL DEFAULT 'none',
+            type_hint_confidence INTEGER NOT NULL DEFAULT 0,
+            modified_time_ns INTEGER NOT NULL DEFAULT 0,
+            platform_file_id TEXT NOT NULL DEFAULT '',
+            scan_generation INTEGER NOT NULL DEFAULT 0,
+            last_seen_generation INTEGER NOT NULL DEFAULT 0,
+            dirty_state TEXT NOT NULL DEFAULT 'dirty',
+            dirty_reason TEXT NOT NULL DEFAULT 'new_path',
+            parser_version INTEGER NOT NULL DEFAULT 1,
+            classifier_version INTEGER NOT NULL DEFAULT 1,
+            parse_status TEXT NOT NULL DEFAULT 'not_parsed',
+            is_deleted INTEGER NOT NULL DEFAULT 0,
+            deleted_at_unix INTEGER,
             first_seen_scan_run_id INTEGER,
             last_seen_scan_run_id INTEGER,
             created_at_unix INTEGER NOT NULL DEFAULT 0,
@@ -159,8 +188,13 @@ void create_schema_v2_tables(Database &database) {
             script_project_relative_path TEXT NOT NULL,
             language TEXT NOT NULL,
             base_type TEXT NOT NULL DEFAULT '',
+            direct_base_type TEXT NOT NULL DEFAULT '',
             is_resource_type INTEGER NOT NULL DEFAULT 0,
             is_node_type INTEGER NOT NULL DEFAULT 0,
+            parser_version INTEGER NOT NULL DEFAULT 1,
+            parse_status TEXT NOT NULL DEFAULT 'not_parsed',
+            parse_error TEXT NOT NULL DEFAULT '',
+            last_parsed_generation INTEGER NOT NULL DEFAULT 0,
             script_file_id INTEGER,
             last_seen_scan_run_id INTEGER,
             created_at_unix INTEGER NOT NULL DEFAULT 0,
@@ -197,6 +231,112 @@ void create_schema_v2_tables(Database &database) {
             FOREIGN KEY (last_seen_scan_run_id)
                 REFERENCES project_scan_runs(id)
                 ON DELETE SET NULL
+        );
+    )sql");
+
+    database.exec(R"sql(
+        CREATE TABLE IF NOT EXISTS scanner_meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+    )sql");
+
+    database.exec(R"sql(
+        CREATE TABLE IF NOT EXISTS scan_metrics (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER NOT NULL,
+            scan_run_id INTEGER NOT NULL,
+            scan_generation INTEGER NOT NULL DEFAULT 0,
+            total_wall_ms INTEGER NOT NULL DEFAULT 0,
+            traversal_ms INTEGER NOT NULL DEFAULT 0,
+            metadata_ms INTEGER NOT NULL DEFAULT 0,
+            existing_snapshot_load_ms INTEGER NOT NULL DEFAULT 0,
+            reserve_setup_ms INTEGER NOT NULL DEFAULT 0,
+            dirty_check_ms INTEGER NOT NULL DEFAULT 0,
+            script_candidate_ms INTEGER NOT NULL DEFAULT 0,
+            classification_ms INTEGER NOT NULL DEFAULT 0,
+            script_parse_ms INTEGER NOT NULL DEFAULT 0,
+            sqlite_write_ms INTEGER NOT NULL DEFAULT 0,
+            sqlite_stage_insert_ms INTEGER NOT NULL DEFAULT 0,
+            sqlite_file_merge_ms INTEGER NOT NULL DEFAULT 0,
+            sqlite_clean_refresh_ms INTEGER NOT NULL DEFAULT 0,
+            sqlite_parent_resolve_ms INTEGER NOT NULL DEFAULT 0,
+            sqlite_parse_status_ms INTEGER NOT NULL DEFAULT 0,
+            sqlite_custom_class_ms INTEGER NOT NULL DEFAULT 0,
+            sqlite_tombstone_ms INTEGER NOT NULL DEFAULT 0,
+            sqlite_deleted_reconcile_ms INTEGER NOT NULL DEFAULT 0,
+            sqlite_metrics_write_ms INTEGER NOT NULL DEFAULT 0,
+            godot_materialization_ms INTEGER NOT NULL DEFAULT 0,
+            files_seen INTEGER NOT NULL DEFAULT 0,
+            dirs_seen INTEGER NOT NULL DEFAULT 0,
+            dirs_skipped INTEGER NOT NULL DEFAULT 0,
+            entries_clean INTEGER NOT NULL DEFAULT 0,
+            entries_dirty INTEGER NOT NULL DEFAULT 0,
+            entries_new INTEGER NOT NULL DEFAULT 0,
+            entries_deleted INTEGER NOT NULL DEFAULT 0,
+            rows_inserted INTEGER NOT NULL DEFAULT 0,
+            rows_updated INTEGER NOT NULL DEFAULT 0,
+            rows_clean_refreshed INTEGER NOT NULL DEFAULT 0,
+            rows_tombstoned INTEGER NOT NULL DEFAULT 0,
+            scripts_candidates INTEGER NOT NULL DEFAULT 0,
+            scripts_parsed INTEGER NOT NULL DEFAULT 0,
+            scripts_skipped_clean INTEGER NOT NULL DEFAULT 0,
+            script_lines_scanned INTEGER NOT NULL DEFAULT 0,
+            bytes_read INTEGER NOT NULL DEFAULT 0,
+            entry_record_count INTEGER NOT NULL DEFAULT 0,
+            path_arena_bytes INTEGER NOT NULL DEFAULT 0,
+            existing_snapshot_count INTEGER NOT NULL DEFAULT 0,
+            parsed_script_count INTEGER NOT NULL DEFAULT 0,
+            sqlite_statement_steps INTEGER NOT NULL DEFAULT 0,
+            sqlite_transactions INTEGER NOT NULL DEFAULT 0,
+            ui_rows_materialized INTEGER NOT NULL DEFAULT 0,
+            cancellation_requested INTEGER NOT NULL DEFAULT 0,
+            scan_result_status TEXT NOT NULL DEFAULT 'completed',
+            created_at_unix INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (project_id)
+                REFERENCES projects(id)
+                ON DELETE CASCADE,
+            FOREIGN KEY (scan_run_id)
+                REFERENCES project_scan_runs(id)
+                ON DELETE CASCADE
+        );
+    )sql");
+
+    database.exec(R"sql(
+        CREATE TABLE IF NOT EXISTS deleted_entries (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER NOT NULL,
+            file_id INTEGER,
+            project_relative_path TEXT NOT NULL,
+            deleted_scan_run_id INTEGER NOT NULL,
+            scan_generation INTEGER NOT NULL,
+            deleted_at_unix INTEGER NOT NULL DEFAULT 0,
+            UNIQUE(project_id, project_relative_path, scan_generation),
+            FOREIGN KEY (project_id)
+                REFERENCES projects(id)
+                ON DELETE CASCADE,
+            FOREIGN KEY (file_id)
+                REFERENCES project_files(id)
+                ON DELETE SET NULL,
+            FOREIGN KEY (deleted_scan_run_id)
+                REFERENCES project_scan_runs(id)
+                ON DELETE CASCADE
+        );
+    )sql");
+
+    database.exec(R"sql(
+        CREATE TABLE IF NOT EXISTS classification_policy (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            classifier_version INTEGER NOT NULL DEFAULT 1,
+            updated_at_unix INTEGER NOT NULL DEFAULT 0
+        );
+    )sql");
+
+    database.exec(R"sql(
+        CREATE TABLE IF NOT EXISTS parser_policy (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            parser_version INTEGER NOT NULL DEFAULT 1,
+            updated_at_unix INTEGER NOT NULL DEFAULT 0
         );
     )sql");
 }
@@ -243,6 +383,26 @@ void create_schema_v2_indexes(Database &database) {
     )sql");
 
     database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_project_files_project_id_parent_id
+        ON project_files(project_id, parent_id);
+    )sql");
+
+    database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_project_files_project_id_parent_id_is_deleted
+        ON project_files(project_id, parent_id, is_deleted);
+    )sql");
+
+    database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_project_files_project_id_last_seen_generation
+        ON project_files(project_id, last_seen_generation);
+    )sql");
+
+    database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_project_files_project_id_is_deleted
+        ON project_files(project_id, is_deleted);
+    )sql");
+
+    database.exec(R"sql(
         CREATE INDEX IF NOT EXISTS idx_project_autoloads_project_id_target_project_relative_path
         ON project_autoloads(project_id, target_project_relative_path);
     )sql");
@@ -258,9 +418,71 @@ void create_schema_v2_indexes(Database &database) {
     )sql");
 
     database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_project_custom_classes_project_id_last_parsed_generation
+        ON project_custom_classes(project_id, last_parsed_generation);
+    )sql");
+
+    database.exec(R"sql(
         CREATE INDEX IF NOT EXISTS idx_project_scan_unknowns_project_id_extension
         ON project_scan_unknowns(project_id, extension);
     )sql");
+
+    database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_scan_metrics_project_id_scan_run_id
+        ON scan_metrics(project_id, scan_run_id);
+    )sql");
+
+    database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_deleted_entries_project_id_generation
+        ON deleted_entries(project_id, scan_generation);
+    )sql");
+}
+
+void ensure_schema_v3_columns(Database &database) {
+    add_column_if_missing(database, "project_scan_runs", "scan_generation INTEGER NOT NULL DEFAULT 0");
+
+    add_column_if_missing(database, "project_files", "parent_id INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "project_files", "entry_kind TEXT NOT NULL DEFAULT 'file'");
+    add_column_if_missing(database, "project_files", "godot_type_hint TEXT NOT NULL DEFAULT 'NGT'");
+    add_column_if_missing(database, "project_files", "type_hint_source TEXT NOT NULL DEFAULT 'none'");
+    add_column_if_missing(database, "project_files", "type_hint_confidence INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "project_files", "modified_time_ns INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "project_files", "platform_file_id TEXT NOT NULL DEFAULT ''");
+    add_column_if_missing(database, "project_files", "scan_generation INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "project_files", "last_seen_generation INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "project_files", "dirty_state TEXT NOT NULL DEFAULT 'dirty'");
+    add_column_if_missing(database, "project_files", "dirty_reason TEXT NOT NULL DEFAULT 'new_path'");
+    add_column_if_missing(database, "project_files", "parser_version INTEGER NOT NULL DEFAULT 1");
+    add_column_if_missing(database, "project_files", "classifier_version INTEGER NOT NULL DEFAULT 1");
+    add_column_if_missing(database, "project_files", "parse_status TEXT NOT NULL DEFAULT 'not_parsed'");
+    add_column_if_missing(database, "project_files", "is_deleted INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "project_files", "deleted_at_unix INTEGER");
+
+    add_column_if_missing(database, "project_custom_classes", "direct_base_type TEXT NOT NULL DEFAULT ''");
+    add_column_if_missing(database, "project_custom_classes", "parser_version INTEGER NOT NULL DEFAULT 1");
+    add_column_if_missing(database, "project_custom_classes", "parse_status TEXT NOT NULL DEFAULT 'not_parsed'");
+    add_column_if_missing(database, "project_custom_classes", "parse_error TEXT NOT NULL DEFAULT ''");
+    add_column_if_missing(database, "project_custom_classes", "last_parsed_generation INTEGER NOT NULL DEFAULT 0");
+
+    add_column_if_missing(database, "scan_metrics", "existing_snapshot_load_ms INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "reserve_setup_ms INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "script_candidate_ms INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "sqlite_stage_insert_ms INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "sqlite_file_merge_ms INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "sqlite_clean_refresh_ms INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "sqlite_parent_resolve_ms INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "sqlite_parse_status_ms INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "sqlite_custom_class_ms INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "sqlite_tombstone_ms INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "sqlite_deleted_reconcile_ms INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "sqlite_metrics_write_ms INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "rows_clean_refreshed INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "script_lines_scanned INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "entry_record_count INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "path_arena_bytes INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "existing_snapshot_count INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "parsed_script_count INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "sqlite_statement_steps INTEGER NOT NULL DEFAULT 0");
 }
 
 bool needs_legacy_v1_migration(Database &database) {
@@ -480,6 +702,7 @@ void create_fresh_v2_schema(Database &database) {
     Transaction transaction(database);
     create_projects_table(database);
     create_schema_v2_tables(database);
+    ensure_schema_v3_columns(database);
     create_schema_v2_indexes(database);
 
     database.exec(R"sql(
@@ -496,6 +719,7 @@ void ensure_v2_schema(Database &database) {
     Transaction transaction(database);
     create_projects_table(database);
     create_schema_v2_tables(database);
+    ensure_schema_v3_columns(database);
     create_schema_v2_indexes(database);
 
     database.exec(R"sql(

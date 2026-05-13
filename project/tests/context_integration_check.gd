@@ -35,50 +35,133 @@ func _initialize() -> void:
 	if not context.scan_project():
 		failures.append("scan_project() should succeed after initialize_database().")
 
-	if not context.scan_current_project():
-		failures.append("scan_current_project() should succeed after initialize_database().")
+	var compatibility_summary: Dictionary = context.get_last_scan_results()
+	if compatibility_summary.is_empty():
+		failures.append("get_last_scan_results() should contain scan summary after scan_project().")
+	elif compatibility_summary.has("files"):
+		failures.append("Scan summary should not materialize full files array by default.")
 
-	var inventory: Dictionary = context.get_last_scan_results()
+	var forced_summary: Dictionary = context.start_scan({"force_rescan": true})
+	if forced_summary.is_empty():
+		failures.append("start_scan({force_rescan=true}) should return immediate scan lifecycle data.")
 
-	if not inventory.has("files"):
-		failures.append("Inventory should contain files key.")
-	if not inventory.has("autoloads"):
-		failures.append("Inventory should contain autoloads key.")
-	if not inventory.has("custom_classes"):
-		failures.append("Inventory should contain custom_classes key.")
+	var first_scan_id: int = int(forced_summary.get("scan_id", 0))
+	if first_scan_id <= 0:
+		failures.append("start_scan() should return a positive scan_id.")
 
-	if inventory.get("files", null) == null or not (inventory["files"] is Array):
-		failures.append("Inventory files should be an Array.")
-	if inventory.get("autoloads", null) == null or not (inventory["autoloads"] is Array):
-		failures.append("Inventory autoloads should be an Array.")
-	if inventory.get("custom_classes", null) == null or not (inventory["custom_classes"] is Array):
-		failures.append("Inventory custom_classes should be an Array.")
+	var forced_status: String = String(forced_summary.get("status", ""))
+	if not (
+		forced_status == "queued"
+		or forced_status == "running"
+		or forced_status == "already_running"
+	):
+		failures.append("start_scan() should return queued/running lifecycle status.")
 
-	var files: Array = inventory.get("files", [])
-	var main_scene_entry: Dictionary = _find_file_entry(files, "res://main.tscn")
+	var first_status: Dictionary = _wait_for_scan_completion(context, first_scan_id, 60000)
+	if first_status.is_empty():
+		failures.append("get_scan_status(scan_id) should return lifecycle status.")
+	elif String(first_status.get("status", "")) != "completed":
+		failures.append("Async start_scan() should transition to completed status.")
+
+	var first_summary: Dictionary = context.get_last_scan_results()
+	if first_summary.is_empty():
+		failures.append("get_last_scan_results() should contain scan summary after async completion.")
+	elif not first_summary.has("scan_id"):
+		failures.append("Scan summary should contain scan_id.")
+	elif first_summary.has("files"):
+		failures.append("Scan summary should not materialize full files array by default.")
+
+	var first_metrics: Dictionary = context.get_scan_metrics(first_scan_id)
+	if first_metrics.is_empty():
+		failures.append("get_scan_metrics(scan_id) should return persisted metrics.")
+	elif int(first_metrics.get("scripts_parsed", -1)) <= 0:
+		failures.append("First scan should parse dirty script candidates.")
+
+	var file_count: int = context.get_file_count({})
+	if file_count <= 0:
+		failures.append("get_file_count({}) should return indexed files.")
+
+	var first_page: Array = context.get_files_page(0, 10, "path", {})
+	if first_page.is_empty():
+		failures.append("get_files_page() should return a visible page of rows.")
+	elif first_page.size() > 10:
+		failures.append("get_files_page() should respect the requested page limit.")
+
+	var root_children: Array = context.get_directory_children(0, 0, 20, "path", {})
+	if root_children.is_empty():
+		failures.append("get_directory_children(0, ...) should return top-level entries.")
+
+	var main_scene_rows: Array = context.get_files_page(0, 5, "path", {"search": "main.tscn"})
+	var main_scene_entry: Dictionary = _find_file_entry(main_scene_rows, "res://main.tscn")
 	if main_scene_entry.is_empty():
-		failures.append("Inventory should include res://main.tscn.")
+		failures.append("Paged file query should include res://main.tscn.")
 	else:
 		var main_scene_godot_type: String = String(main_scene_entry.get("godot_type", ""))
-		if main_scene_godot_type != "Node":
+		if main_scene_godot_type != "PackedScene":
 			failures.append(
-				"res://main.tscn godot_type expected Node, got %s." % main_scene_godot_type
+				(
+					"res://main.tscn cheap godot_type expected PackedScene, got %s."
+					% main_scene_godot_type
+				)
 			)
 
+		var main_scene_id: int = int(main_scene_entry.get("file_id", 0))
+		var main_scene_details: Dictionary = context.get_file_details(main_scene_id)
+		if main_scene_details.is_empty():
+			failures.append("get_file_details(file_id) should return the indexed row.")
+
+	var material_rows: Array = context.get_files_page(
+		0, 5, "path", {"search": "type_probe_material.tres"}
+	)
 	var material_entry: Dictionary = _find_file_entry(
-		files, "res://tests/fixtures/type_probe_material.tres"
+		material_rows, "res://tests/fixtures/type_probe_material.tres"
 	)
 	if material_entry.is_empty():
-		failures.append("Inventory should include the StandardMaterial3D type probe resource.")
+		failures.append("Paged file query should include the type probe resource.")
 	else:
 		var material_godot_type: String = String(material_entry.get("godot_type", ""))
-		if material_godot_type != "StandardMaterial3D":
+		if material_godot_type != "Resource":
 			failures.append(
-				"Material godot_type expected StandardMaterial3D, got %s." % material_godot_type
+				"Material cheap godot_type expected Resource, got %s." % material_godot_type
 			)
 
-	if not context.scan_project():
-		failures.append("Second scan_project() call should succeed.")
+	var custom_class_count: int = context.get_custom_class_count({})
+	if custom_class_count <= 0:
+		failures.append("get_custom_class_count({}) should include scanner_probe.gd.")
+
+	var custom_classes: Array = context.get_custom_classes_page(0, 10, "class_name", {})
+	var probe_class: Dictionary = _find_custom_class(custom_classes, "GotoolScannerProbe")
+	if probe_class.is_empty():
+		failures.append("get_custom_classes_page() should include GotoolScannerProbe.")
+	elif String(probe_class.get("direct_base_type", "")) != "Resource":
+		failures.append("GotoolScannerProbe direct_base_type should be Resource.")
+
+	if not context.scan_current_project():
+		failures.append("Second scan_current_project() should succeed after initialize_database().")
+
+	var second_summary: Dictionary = context.get_last_scan_results()
+	var second_scan_id: int = int(second_summary.get("scan_id", 0))
+	var second_metrics: Dictionary = context.get_scan_metrics(second_scan_id)
+	if int(second_metrics.get("scripts_parsed", -1)) != 0:
+		failures.append("No-change rescan should parse zero unchanged scripts.")
+
+	var native_benchmark: Dictionary = context.benchmark_native_scan(
+		{"include_custom_classes": true, "load_existing_snapshot": false}
+	)
+	if native_benchmark.is_empty():
+		failures.append("benchmark_native_scan() should return native metrics and counts.")
+	elif bool(native_benchmark.get("materialized", true)):
+		failures.append("benchmark_native_scan() should avoid Godot result materialization.")
+	elif not (native_benchmark.get("metrics", null) is Dictionary):
+		failures.append("benchmark_native_scan() should include a metrics dictionary.")
+
+	var debug_inventory: Dictionary = context.export_full_inventory_for_debug()
+	if debug_inventory.is_empty():
+		failures.append(
+			"export_full_inventory_for_debug() should materialize explicit debug inventory."
+		)
+	elif not (debug_inventory.get("files", null) is Array):
+		failures.append("Debug inventory should contain files array.")
 
 	var projects: Array = context.list_projects()
 	if projects.is_empty():
@@ -111,3 +194,30 @@ func _find_file_entry(files: Array, path: String) -> Dictionary:
 			return entry
 
 	return {}
+
+
+func _find_custom_class(custom_classes: Array, expected_class_name: String) -> Dictionary:
+	for entry: Dictionary in custom_classes:
+		if String(entry.get("class_name", "")) == expected_class_name:
+			return entry
+
+	return {}
+
+
+func _wait_for_scan_completion(
+		context: GodotProjectContext,
+		scan_id: int,
+		timeout_ms: int = 30000
+	) -> Dictionary:
+	var started_ms: int = Time.get_ticks_msec()
+	var status: Dictionary = {}
+
+	while Time.get_ticks_msec() - started_ms <= timeout_ms:
+		status = context.get_scan_status(scan_id)
+		var value: String = String(status.get("status", ""))
+		if not (value == "queued" or value == "running" or value == "already_running"):
+			return status
+
+		OS.delay_msec(25)
+
+	return status
