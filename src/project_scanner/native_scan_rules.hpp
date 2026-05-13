@@ -14,7 +14,7 @@ using ScanGeneration = int64_t;
 
 static constexpr int64_t PARSER_VERSION = 1;
 static constexpr int64_t CLASSIFIER_VERSION = 1;
-static constexpr int64_t SCANNER_SCHEMA_VERSION = 3;
+static constexpr int64_t SCANNER_SCHEMA_VERSION = 4;
 
 enum class EntryKind : uint8_t {
     File = 0,
@@ -115,10 +115,22 @@ struct ScanMetrics {
     int64_t total_wall_ms = 0;
     int64_t traversal_ms = 0;
     int64_t metadata_ms = 0;
+    int64_t existing_snapshot_load_ms = 0;
+    int64_t reserve_setup_ms = 0;
     int64_t dirty_check_ms = 0;
+    int64_t script_candidate_ms = 0;
     int64_t classification_ms = 0;
     int64_t script_parse_ms = 0;
     int64_t sqlite_write_ms = 0;
+    int64_t sqlite_stage_insert_ms = 0;
+    int64_t sqlite_file_merge_ms = 0;
+    int64_t sqlite_clean_refresh_ms = 0;
+    int64_t sqlite_parent_resolve_ms = 0;
+    int64_t sqlite_parse_status_ms = 0;
+    int64_t sqlite_custom_class_ms = 0;
+    int64_t sqlite_tombstone_ms = 0;
+    int64_t sqlite_deleted_reconcile_ms = 0;
+    int64_t sqlite_metrics_write_ms = 0;
     int64_t godot_materialization_ms = 0;
     int64_t files_seen = 0;
     int64_t dirs_seen = 0;
@@ -129,11 +141,18 @@ struct ScanMetrics {
     int64_t entries_deleted = 0;
     int64_t rows_inserted = 0;
     int64_t rows_updated = 0;
+    int64_t rows_clean_refreshed = 0;
     int64_t rows_tombstoned = 0;
     int64_t scripts_candidates = 0;
     int64_t scripts_parsed = 0;
     int64_t scripts_skipped_clean = 0;
+    int64_t script_lines_scanned = 0;
     int64_t bytes_read = 0;
+    int64_t entry_record_count = 0;
+    int64_t path_arena_bytes = 0;
+    int64_t existing_snapshot_count = 0;
+    int64_t parsed_script_count = 0;
+    int64_t sqlite_statement_steps = 0;
     int64_t sqlite_transactions = 0;
     int64_t ui_rows_materialized = 0;
     bool cancellation_requested = false;
@@ -193,8 +212,10 @@ public:
     uint32_t append(std::string_view value);
     std::string_view view(uint32_t offset, uint32_t length) const;
     std::string string_at(uint32_t offset, uint32_t length) const;
+    void reserve(size_t bytes);
     void clear();
     size_t size() const;
+    size_t capacity() const;
 
 private:
     std::vector<char> data_;
@@ -205,6 +226,8 @@ struct EntryRecord {
     uint32_t path_length = 0;
     uint32_t name_offset = 0;
     uint32_t name_length = 0;
+    uint32_t extension_offset = 0;
+    uint32_t extension_length = 0;
     int64_t parent_record_index = -1;
     int64_t parent_db_id = 0;
     int64_t database_id = 0;

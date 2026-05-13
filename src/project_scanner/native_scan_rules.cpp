@@ -58,12 +58,20 @@ std::string PathArena::string_at(uint32_t offset, uint32_t length) const {
     return std::string(value.begin(), value.end());
 }
 
+void PathArena::reserve(size_t bytes) {
+    data_.reserve(bytes);
+}
+
 void PathArena::clear() {
     data_.clear();
 }
 
 size_t PathArena::size() const {
     return data_.size();
+}
+
+size_t PathArena::capacity() const {
+    return data_.capacity();
 }
 
 bool EntryRecord::is_hidden() const {
@@ -352,12 +360,17 @@ DirtyCheckResult detect_dirty_state(
         return { DirtyState::Dirty, DirtyReason::KindChanged };
     }
 
-    if (existing.size_bytes != size_bytes) {
-        return { DirtyState::Dirty, DirtyReason::SizeChanged };
-    }
+    // Directory timestamps can jitter on some filesystems/OS combinations
+    // without representing meaningful inventory changes, so only file entries
+    // use size/mtime as dirtiness signals.
+    if (kind == EntryKind::File) {
+        if (existing.size_bytes != size_bytes) {
+            return { DirtyState::Dirty, DirtyReason::SizeChanged };
+        }
 
-    if (existing.modified_time_ns != modified_time_ns) {
-        return { DirtyState::Dirty, DirtyReason::ModifiedTimeChanged };
+        if (existing.modified_time_ns != modified_time_ns) {
+            return { DirtyState::Dirty, DirtyReason::ModifiedTimeChanged };
+        }
     }
 
     if (!existing.platform_file_id.empty() && !platform_file_id.empty() &&

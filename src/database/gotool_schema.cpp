@@ -250,10 +250,22 @@ void create_schema_v2_tables(Database &database) {
             total_wall_ms INTEGER NOT NULL DEFAULT 0,
             traversal_ms INTEGER NOT NULL DEFAULT 0,
             metadata_ms INTEGER NOT NULL DEFAULT 0,
+            existing_snapshot_load_ms INTEGER NOT NULL DEFAULT 0,
+            reserve_setup_ms INTEGER NOT NULL DEFAULT 0,
             dirty_check_ms INTEGER NOT NULL DEFAULT 0,
+            script_candidate_ms INTEGER NOT NULL DEFAULT 0,
             classification_ms INTEGER NOT NULL DEFAULT 0,
             script_parse_ms INTEGER NOT NULL DEFAULT 0,
             sqlite_write_ms INTEGER NOT NULL DEFAULT 0,
+            sqlite_stage_insert_ms INTEGER NOT NULL DEFAULT 0,
+            sqlite_file_merge_ms INTEGER NOT NULL DEFAULT 0,
+            sqlite_clean_refresh_ms INTEGER NOT NULL DEFAULT 0,
+            sqlite_parent_resolve_ms INTEGER NOT NULL DEFAULT 0,
+            sqlite_parse_status_ms INTEGER NOT NULL DEFAULT 0,
+            sqlite_custom_class_ms INTEGER NOT NULL DEFAULT 0,
+            sqlite_tombstone_ms INTEGER NOT NULL DEFAULT 0,
+            sqlite_deleted_reconcile_ms INTEGER NOT NULL DEFAULT 0,
+            sqlite_metrics_write_ms INTEGER NOT NULL DEFAULT 0,
             godot_materialization_ms INTEGER NOT NULL DEFAULT 0,
             files_seen INTEGER NOT NULL DEFAULT 0,
             dirs_seen INTEGER NOT NULL DEFAULT 0,
@@ -264,11 +276,18 @@ void create_schema_v2_tables(Database &database) {
             entries_deleted INTEGER NOT NULL DEFAULT 0,
             rows_inserted INTEGER NOT NULL DEFAULT 0,
             rows_updated INTEGER NOT NULL DEFAULT 0,
+            rows_clean_refreshed INTEGER NOT NULL DEFAULT 0,
             rows_tombstoned INTEGER NOT NULL DEFAULT 0,
             scripts_candidates INTEGER NOT NULL DEFAULT 0,
             scripts_parsed INTEGER NOT NULL DEFAULT 0,
             scripts_skipped_clean INTEGER NOT NULL DEFAULT 0,
+            script_lines_scanned INTEGER NOT NULL DEFAULT 0,
             bytes_read INTEGER NOT NULL DEFAULT 0,
+            entry_record_count INTEGER NOT NULL DEFAULT 0,
+            path_arena_bytes INTEGER NOT NULL DEFAULT 0,
+            existing_snapshot_count INTEGER NOT NULL DEFAULT 0,
+            parsed_script_count INTEGER NOT NULL DEFAULT 0,
+            sqlite_statement_steps INTEGER NOT NULL DEFAULT 0,
             sqlite_transactions INTEGER NOT NULL DEFAULT 0,
             ui_rows_materialized INTEGER NOT NULL DEFAULT 0,
             cancellation_requested INTEGER NOT NULL DEFAULT 0,
@@ -369,6 +388,11 @@ void create_schema_v2_indexes(Database &database) {
     )sql");
 
     database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_project_files_project_id_parent_id_is_deleted
+        ON project_files(project_id, parent_id, is_deleted);
+    )sql");
+
+    database.exec(R"sql(
         CREATE INDEX IF NOT EXISTS idx_project_files_project_id_last_seen_generation
         ON project_files(project_id, last_seen_generation);
     )sql");
@@ -439,6 +463,26 @@ void ensure_schema_v3_columns(Database &database) {
     add_column_if_missing(database, "project_custom_classes", "parse_status TEXT NOT NULL DEFAULT 'not_parsed'");
     add_column_if_missing(database, "project_custom_classes", "parse_error TEXT NOT NULL DEFAULT ''");
     add_column_if_missing(database, "project_custom_classes", "last_parsed_generation INTEGER NOT NULL DEFAULT 0");
+
+    add_column_if_missing(database, "scan_metrics", "existing_snapshot_load_ms INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "reserve_setup_ms INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "script_candidate_ms INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "sqlite_stage_insert_ms INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "sqlite_file_merge_ms INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "sqlite_clean_refresh_ms INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "sqlite_parent_resolve_ms INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "sqlite_parse_status_ms INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "sqlite_custom_class_ms INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "sqlite_tombstone_ms INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "sqlite_deleted_reconcile_ms INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "sqlite_metrics_write_ms INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "rows_clean_refreshed INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "script_lines_scanned INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "entry_record_count INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "path_arena_bytes INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "existing_snapshot_count INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "parsed_script_count INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "sqlite_statement_steps INTEGER NOT NULL DEFAULT 0");
 }
 
 bool needs_legacy_v1_migration(Database &database) {

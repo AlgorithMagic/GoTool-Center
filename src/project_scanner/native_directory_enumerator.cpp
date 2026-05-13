@@ -36,6 +36,14 @@ void finish_record(
     record.path_length = static_cast<uint32_t>(project_path.size());
     record.name_offset = arena.append(name);
     record.name_length = static_cast<uint32_t>(name.size());
+
+    const std::string extension =
+        kind == EntryKind::Directory
+            ? std::string()
+            : extension_from_path(project_path);
+    record.extension_offset = arena.append(extension);
+    record.extension_length = static_cast<uint32_t>(extension.size());
+
     record.parent_record_index = parent_record_index;
     record.entry_kind = kind;
     record.set_hidden(hidden);

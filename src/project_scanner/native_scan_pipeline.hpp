@@ -5,8 +5,10 @@
 #include "project_scanner/native_script_parser.hpp"
 
 #include <atomic>
+#include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -80,6 +82,33 @@ struct CustomClassRow {
     ScanGeneration last_parsed_generation = 0;
 };
 
+struct TransparentStringHash {
+    using is_transparent = void;
+
+    size_t operator()(std::string_view value) const noexcept {
+        return std::hash<std::string_view> {}(value);
+    }
+
+    size_t operator()(const std::string &value) const noexcept {
+        return operator()(std::string_view(value));
+    }
+};
+
+struct TransparentStringEqual {
+    using is_transparent = void;
+
+    bool operator()(std::string_view left, std::string_view right) const noexcept {
+        return left == right;
+    }
+
+    bool operator()(const std::string &left, const std::string &right) const noexcept {
+        return left == right;
+    }
+};
+
+using ExistingEntryMap =
+    std::unordered_map<std::string, ExistingEntrySnapshot, TransparentStringHash, TransparentStringEqual>;
+
 class ScanRepository {
 public:
     explicit ScanRepository(gotool::database::Database &database);
@@ -94,7 +123,7 @@ public:
         int64_t finished_at_unix,
         const std::string &error_message = ""
     );
-    std::unordered_map<std::string, ExistingEntrySnapshot> load_existing_entries(int64_t project_id);
+    ExistingEntryMap load_existing_entries(int64_t project_id);
     void write_scan_results(
         int64_t project_id,
         int64_t scan_run_id,

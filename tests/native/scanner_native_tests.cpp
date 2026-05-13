@@ -30,6 +30,7 @@ using gotool::project_scanner::NativeDirectoryEnumerator;
 using gotool::project_scanner::NativeScanPipeline;
 using gotool::project_scanner::ParseStatus;
 using gotool::project_scanner::PathArena;
+using gotool::project_scanner::ScanMetrics;
 using gotool::project_scanner::ScanOptions;
 using gotool::project_scanner::ScanRepository;
 using gotool::project_scanner::ScriptLanguage;
@@ -160,6 +161,17 @@ TEST_CASE("dirty_detector_reports_clean_and_metadata_changes") {
 
     CHECK(
         gotool::project_scanner::detect_dirty_state(
+            EntryKind::Directory,
+            0,
+            999,
+            "",
+            snapshot_for(EntryKind::Directory, 0, 20, ""),
+            false
+        ).state == DirtyState::Clean
+    );
+
+    CHECK(
+        gotool::project_scanner::detect_dirty_state(
             EntryKind::File,
             10,
             20,
@@ -258,13 +270,30 @@ TEST_CASE("path_arena_stores_offsets_without_godot_strings") {
     CHECK(arena.view(offset, 17) == "scripts/player.gd");
 }
 
+TEST_CASE("path_arena_reserve_is_stable_for_hot_path_appends") {
+    PathArena arena;
+    arena.reserve(128);
+
+    const size_t before_capacity = arena.capacity();
+    const uint32_t first = arena.append("scripts");
+    const uint32_t second = arena.append("/player.gd");
+
+    CHECK(before_capacity >= 128);
+    CHECK(arena.capacity() >= before_capacity);
+    CHECK(arena.view(first, 7) == "scripts");
+    CHECK(arena.view(second, 10) == "/player.gd");
+}
+
 TEST_CASE("scanner_schema_v3_supports_batched_writes_tombstones_and_paging") {
     TemporaryRoot root(make_temp_root("scanner_schema"));
+    TemporaryRoot db_root(make_temp_root("scanner_schema_db"));
     write_text(root.path / "project.godot", "[application]\n");
     write_text(root.path / "scripts" / "player.gd", "class_name Player\nextends Node\n");
     write_text(root.path / "levels" / "main.tscn", "[gd_scene format=3]\n");
 
-    Database database((root.path / "scanner.sqlite3").string());
+    // Keep the database out of the scanned project tree to avoid self-induced
+    // dirty entries when SQLite file size changes between scans.
+    Database database((db_root.path / "scanner.sqlite3").string());
     gotool::database::create_schema(database, 0);
     database.exec(
         "INSERT INTO projects ("
@@ -299,6 +328,37 @@ TEST_CASE("scanner_schema_v3_supports_batched_writes_tombstones_and_paging") {
     const gotool::project_scanner::ScanResultSummary clean = pipeline.run(options);
     CHECK(clean.scripts_parsed == 0);
     CHECK(clean.scripts_skipped_clean == 1);
+
+    const ScanMetrics clean_metrics = repository.get_scan_metrics(1, clean.scan_run_id);
+    std::string unexpected_path;
+    std::string unexpected_reason;
+    if (clean_metrics.rows_updated != 0) {
+        Statement unexpected = database.prepare(R"sql(
+            SELECT project_relative_path, dirty_reason
+            FROM project_files
+            WHERE project_id = ?1
+              AND scan_generation = ?2
+              AND is_deleted = 0
+              AND dirty_state <> 'clean'
+            ORDER BY project_relative_path ASC
+            LIMIT 1;
+        )sql");
+        unexpected.bind_int64(1, 1);
+        unexpected.bind_int64(2, clean.scan_generation);
+        if (unexpected.step() == Statement::StepResult::Row) {
+            unexpected_path = unexpected.column_text(0);
+            unexpected_reason = unexpected.column_text(1);
+        }
+    }
+
+    CHECK_MESSAGE(
+        clean_metrics.rows_updated == 0,
+        "rows_updated=", clean_metrics.rows_updated,
+        " path='", unexpected_path,
+        "' reason='", unexpected_reason, "'"
+    );
+    CHECK(clean_metrics.rows_clean_refreshed >= 3);
+    CHECK(clean_metrics.sqlite_stage_insert_ms >= 0);
 
     write_text(root.path / "scripts" / "player.gd", "class_name Player\nextends Resource\n");
     const gotool::project_scanner::ScanResultSummary one_script = pipeline.run(options);

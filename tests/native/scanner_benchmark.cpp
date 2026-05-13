@@ -47,6 +47,16 @@ void append_text_file(const std::filesystem::path &path, const std::string &text
     output << text;
 }
 
+void mutate_many_assets(const std::filesystem::path &root, int32_t count) {
+    for (int32_t i = 0; i < count; ++i) {
+        const int32_t bucket = i % 800;
+        const std::filesystem::path file =
+            root / "assets" / ("bucket_" + std::to_string(bucket)) /
+            ("asset_" + std::to_string(i * 3) + ".json");
+        append_text_file(file, "mutated\n");
+    }
+}
+
 void register_benchmark_project(Database &database, const std::filesystem::path &root) {
     database.exec(
         "INSERT INTO projects ("
@@ -121,6 +131,39 @@ BenchmarkScenarioResult run_native_no_db_scenario(
     return result;
 }
 
+BenchmarkScenarioResult run_debug_export_materialization_scenario(Database &database, int64_t project_id) {
+    BenchmarkScenarioResult result;
+    result.scenario = "debug_export_materialization";
+    result.summary.status = "completed";
+
+    ScanRepository repository(database);
+    const auto start = std::chrono::steady_clock::now();
+
+    const int64_t file_count = repository.count_files(project_id, gotool::project_scanner::FileQuery());
+    const int64_t class_count = repository.count_custom_classes(project_id, gotool::project_scanner::CustomClassQuery());
+
+    int64_t materialized = 0;
+    for (int64_t offset = 0; offset < file_count; offset += 500) {
+        const std::vector<gotool::project_scanner::FileRow> page =
+            repository.list_files(project_id, gotool::project_scanner::FileQuery(), offset, 500, "path");
+        materialized += static_cast<int64_t>(page.size());
+    }
+
+    for (int64_t offset = 0; offset < class_count; offset += 500) {
+        const std::vector<gotool::project_scanner::CustomClassRow> page =
+            repository.list_custom_classes(project_id, gotool::project_scanner::CustomClassQuery(), offset, 500, "class_name");
+        materialized += static_cast<int64_t>(page.size());
+    }
+
+    result.metrics.total_wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - start
+    ).count();
+    result.metrics.files_seen = file_count;
+    result.metrics.scripts_parsed = class_count;
+    result.metrics.ui_rows_materialized = materialized;
+    return result;
+}
+
 std::string scenario_json(const BenchmarkScenarioResult &scenario) {
     return
         "    {\n"
@@ -130,18 +173,39 @@ std::string scenario_json(const BenchmarkScenarioResult &scenario) {
         "      \"status\": \"" + scenario.summary.status + "\",\n"
         "      \"total_wall_ms\": " + std::to_string(scenario.metrics.total_wall_ms) + ",\n"
         "      \"traversal_ms\": " + std::to_string(scenario.metrics.traversal_ms) + ",\n"
+        "      \"existing_snapshot_load_ms\": " + std::to_string(scenario.metrics.existing_snapshot_load_ms) + ",\n"
+        "      \"reserve_setup_ms\": " + std::to_string(scenario.metrics.reserve_setup_ms) + ",\n"
         "      \"dirty_check_ms\": " + std::to_string(scenario.metrics.dirty_check_ms) + ",\n"
+        "      \"script_candidate_ms\": " + std::to_string(scenario.metrics.script_candidate_ms) + ",\n"
         "      \"script_parse_ms\": " + std::to_string(scenario.metrics.script_parse_ms) + ",\n"
         "      \"sqlite_write_ms\": " + std::to_string(scenario.metrics.sqlite_write_ms) + ",\n"
+        "      \"sqlite_stage_insert_ms\": " + std::to_string(scenario.metrics.sqlite_stage_insert_ms) + ",\n"
+        "      \"sqlite_file_merge_ms\": " + std::to_string(scenario.metrics.sqlite_file_merge_ms) + ",\n"
+        "      \"sqlite_clean_refresh_ms\": " + std::to_string(scenario.metrics.sqlite_clean_refresh_ms) + ",\n"
+        "      \"sqlite_parent_resolve_ms\": " + std::to_string(scenario.metrics.sqlite_parent_resolve_ms) + ",\n"
+        "      \"sqlite_parse_status_ms\": " + std::to_string(scenario.metrics.sqlite_parse_status_ms) + ",\n"
+        "      \"sqlite_custom_class_ms\": " + std::to_string(scenario.metrics.sqlite_custom_class_ms) + ",\n"
+        "      \"sqlite_tombstone_ms\": " + std::to_string(scenario.metrics.sqlite_tombstone_ms) + ",\n"
+        "      \"sqlite_deleted_reconcile_ms\": " + std::to_string(scenario.metrics.sqlite_deleted_reconcile_ms) + ",\n"
         "      \"files_seen\": " + std::to_string(scenario.metrics.files_seen) + ",\n"
         "      \"dirs_seen\": " + std::to_string(scenario.metrics.dirs_seen) + ",\n"
         "      \"entries_clean\": " + std::to_string(scenario.metrics.entries_clean) + ",\n"
         "      \"entries_dirty\": " + std::to_string(scenario.metrics.entries_dirty) + ",\n"
         "      \"entries_new\": " + std::to_string(scenario.metrics.entries_new) + ",\n"
         "      \"entries_deleted\": " + std::to_string(scenario.metrics.entries_deleted) + ",\n"
+        "      \"rows_inserted\": " + std::to_string(scenario.metrics.rows_inserted) + ",\n"
+        "      \"rows_updated\": " + std::to_string(scenario.metrics.rows_updated) + ",\n"
+        "      \"rows_clean_refreshed\": " + std::to_string(scenario.metrics.rows_clean_refreshed) + ",\n"
+        "      \"rows_tombstoned\": " + std::to_string(scenario.metrics.rows_tombstoned) + ",\n"
         "      \"scripts_candidates\": " + std::to_string(scenario.metrics.scripts_candidates) + ",\n"
         "      \"scripts_parsed\": " + std::to_string(scenario.metrics.scripts_parsed) + ",\n"
-        "      \"scripts_skipped_clean\": " + std::to_string(scenario.metrics.scripts_skipped_clean) + "\n"
+        "      \"scripts_skipped_clean\": " + std::to_string(scenario.metrics.scripts_skipped_clean) + ",\n"
+        "      \"entry_record_count\": " + std::to_string(scenario.metrics.entry_record_count) + ",\n"
+        "      \"path_arena_bytes\": " + std::to_string(scenario.metrics.path_arena_bytes) + ",\n"
+        "      \"existing_snapshot_count\": " + std::to_string(scenario.metrics.existing_snapshot_count) + ",\n"
+        "      \"parsed_script_count\": " + std::to_string(scenario.metrics.parsed_script_count) + ",\n"
+        "      \"sqlite_statement_steps\": " + std::to_string(scenario.metrics.sqlite_statement_steps) + ",\n"
+        "      \"ui_rows_materialized\": " + std::to_string(scenario.metrics.ui_rows_materialized) + "\n"
         "    }";
 }
 
@@ -172,12 +236,37 @@ TEST_CASE("scanner_benchmark_synthetic_large_project [benchmark][.]") {
     options.persist_to_database = true;
 
     std::vector<BenchmarkScenarioResult> scenarios;
-    scenarios.push_back(run_native_no_db_scenario(pipeline, "native_fast_no_db_cold", options));
-    scenarios.push_back(run_persisted_scenario(pipeline, database, "db_cold_scan", options));
-    scenarios.push_back(run_persisted_scenario(pipeline, database, "db_immediate_no_change", options));
+    ScanOptions enumerate_only = options;
+    enumerate_only.collect_custom_classes = false;
+    scenarios.push_back(run_native_no_db_scenario(pipeline, "enumerate_only", enumerate_only));
+
+    scenarios.push_back(run_persisted_scenario(pipeline, database, "db_full_first_scan", options));
+
+    ScanOptions enumerate_plus_dirty = options;
+    enumerate_plus_dirty.persist_to_database = false;
+    enumerate_plus_dirty.collect_custom_classes = false;
+    scenarios.push_back(run_native_no_db_scenario(pipeline, "enumerate_plus_dirty_check", enumerate_plus_dirty));
+
+    ScanOptions enumerate_plus_parse = options;
+    enumerate_plus_parse.persist_to_database = false;
+    enumerate_plus_parse.collect_custom_classes = true;
+    enumerate_plus_parse.force_rescan = true;
+    scenarios.push_back(run_native_no_db_scenario(pipeline, "enumerate_plus_script_parse", enumerate_plus_parse));
+
+    ScanOptions fast_no_db = options;
+    fast_no_db.persist_to_database = false;
+    fast_no_db.collect_custom_classes = true;
+    scenarios.push_back(run_native_no_db_scenario(pipeline, "fast_no_db_inventory", fast_no_db));
+
+    scenarios.push_back(run_persisted_scenario(pipeline, database, "db_repeated_no_change_scan", options));
 
     append_text_file(root / "scripts" / "group_0" / "BenchClass0.gd", "# changed\n");
-    scenarios.push_back(run_persisted_scenario(pipeline, database, "db_one_script_changed", options));
+    scenarios.push_back(run_persisted_scenario(pipeline, database, "db_one_changed_script_scan", options));
+
+    mutate_many_assets(root, 700);
+    scenarios.push_back(run_persisted_scenario(pipeline, database, "db_many_changed_files_scan", options));
+
+    scenarios.push_back(run_debug_export_materialization_scenario(database, 1));
 
     std::atomic_bool cancel_requested = false;
     std::thread cancel_thread([&cancel_requested]() {

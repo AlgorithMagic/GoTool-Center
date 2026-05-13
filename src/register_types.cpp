@@ -2,7 +2,6 @@
 #include "register_types.h"
 
 #include "project_context/gotool_project_context.hpp"
-#include "project_scanner/gotool_project_scanner.hpp"
 
 #include <godot_cpp/godot.hpp>
 
@@ -13,7 +12,6 @@ void initialize_gotool_types(ModuleInitializationLevel p_level) {
         return;
     }
 
-    ClassDB::register_class<ProjectScanner>();
     ClassDB::register_class<GodotProjectContext>();
 }
 

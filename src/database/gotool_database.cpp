@@ -83,10 +83,18 @@ void Statement::bind_int64(int index, int64_t value) {
 }
 
 void Statement::bind_text(int index, const std::string &value) {
+    bind_text(index, std::string_view(value));
+}
+
+void Statement::bind_text(int index, const char *value) {
+    bind_text(index, std::string_view(value != nullptr ? value : ""));
+}
+
+void Statement::bind_text(int index, std::string_view value) {
     const int code = sqlite3_bind_text(
         stmt_,
         index,
-        value.c_str(),
+        value.data(),
         static_cast<int>(value.size()),
         SQLITE_TRANSIENT
     );

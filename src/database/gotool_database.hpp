@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 namespace gotool::database {
 
@@ -26,6 +27,8 @@ public:
 
     void bind_int64(int index, int64_t value);
     void bind_text(int index, const std::string &value);
+    void bind_text(int index, const char *value);
+    void bind_text(int index, std::string_view value);
     void bind_null(int index);
     StepResult step();
     void step_done();
