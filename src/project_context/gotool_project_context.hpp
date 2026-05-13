@@ -71,6 +71,13 @@ public:
         const String &sort,
         const Dictionary &filter
     ) const;
+    Array list_dependencies_for_script(int64_t script_file_id) const;
+    Array list_dependents_of_file(int64_t target_file_id) const;
+    Array list_dependents_of_class(const String &class_name) const;
+    Array list_unresolved_dependencies() const;
+    Array list_dynamic_dependencies() const;
+    Array list_dependency_cycles() const;
+    Array get_dependency_graph_slice(int64_t root_script_file_id, int64_t depth) const;
     Dictionary export_full_inventory_for_debug() const;
 
     Array list_projects() const;

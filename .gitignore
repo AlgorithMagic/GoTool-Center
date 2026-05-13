@@ -18,3 +18,16 @@ mono_crash.*.json
 
 # VS Code-specific ignores
 .vs/*
+.vscode/*
+
+# LLM tool-specific ignores
+.codex/*
+
+# Miscellaneous ignores
+build/linux_failed.log
+docs/*
+docs/sprint-*
+
+# Github specific
+.github/hooks/*
+.github/workflows/hooks/*

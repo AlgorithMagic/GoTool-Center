@@ -12,9 +12,10 @@ namespace gotool::project_scanner {
 
 using ScanGeneration = int64_t;
 
-static constexpr int64_t PARSER_VERSION = 1;
+static constexpr int64_t PARSER_VERSION = 2;
+static constexpr int64_t DEPENDENCY_PARSER_VERSION = 1;
 static constexpr int64_t CLASSIFIER_VERSION = 2;
-static constexpr int64_t SCANNER_SCHEMA_VERSION = 4;
+static constexpr int64_t SCANNER_SCHEMA_VERSION = 5;
 
 enum class EntryKind : uint8_t {
     File = 0,
@@ -201,6 +202,7 @@ enum class DirtyReason : uint16_t {
     ModifiedTimeChanged,
     FileIdentityChanged,
     ParserVersionChanged,
+    DependencyParserVersionChanged,
     ClassifierVersionChanged,
     PriorParseFailedRetry,
     WatcherInvalidated,
@@ -222,6 +224,30 @@ enum class ScriptLanguage : uint8_t {
     CSharp
 };
 
+enum class DependencyKind : uint8_t {
+    PreloadPath = 0,
+    LoadPath,
+    ResourceLoaderLoadPath,
+    GDLoadPath,
+    ExtendsPath,
+    ExtendsClass,
+    ClassNameDeclaration,
+    ConstPreloadAlias,
+    TypedVarRef,
+    TypedParamRef,
+    TypedReturnRef,
+    TypedArrayElementRef,
+    TypedDictionaryRef,
+    ExportTypeRef,
+    SignalTypeRef,
+    NewClassInstantiation,
+    SceneNodePath,
+    ResourceUIDRef,
+    DynamicLoad,
+    UnresolvedSymbol,
+    Unknown
+};
+
 struct ScanMetrics {
     int64_t total_wall_ms = 0;
     int64_t traversal_ms = 0;
@@ -232,6 +258,8 @@ struct ScanMetrics {
     int64_t script_candidate_ms = 0;
     int64_t classification_ms = 0;
     int64_t script_parse_ms = 0;
+    int64_t dependency_parse_ms = 0;
+    int64_t tokenizer_ms = 0;
     int64_t sqlite_write_ms = 0;
     int64_t sqlite_stage_insert_ms = 0;
     int64_t sqlite_file_merge_ms = 0;
@@ -239,6 +267,8 @@ struct ScanMetrics {
     int64_t sqlite_parent_resolve_ms = 0;
     int64_t sqlite_parse_status_ms = 0;
     int64_t sqlite_custom_class_ms = 0;
+    int64_t dependency_sqlite_stage_ms = 0;
+    int64_t dependency_resolution_ms = 0;
     int64_t sqlite_tombstone_ms = 0;
     int64_t sqlite_deleted_reconcile_ms = 0;
     int64_t sqlite_metrics_write_ms = 0;
@@ -257,8 +287,17 @@ struct ScanMetrics {
     int64_t scripts_candidates = 0;
     int64_t scripts_parsed = 0;
     int64_t scripts_skipped_clean = 0;
+    int64_t scripts_dependency_parsed = 0;
+    int64_t scripts_dependency_skipped_clean = 0;
     int64_t script_lines_scanned = 0;
+    int64_t parser_lines_scanned = 0;
     int64_t bytes_read = 0;
+    int64_t parser_bytes_read = 0;
+    int64_t parser_tokens_generated = 0;
+    int64_t parser_limit_exceeded_count = 0;
+    int64_t dependency_records_created = 0;
+    int64_t unresolved_dependency_count = 0;
+    int64_t dynamic_dependency_count = 0;
     int64_t entry_record_count = 0;
     int64_t path_arena_bytes = 0;
     int64_t existing_snapshot_count = 0;
@@ -278,6 +317,7 @@ struct ScanOptions {
     bool force_rescan = false;
     bool persist_to_database = true;
     bool collect_custom_classes = true;
+    bool collect_script_dependencies = true;
     bool include_deleted = false;
     bool load_existing_snapshot = true;
     bool use_dirty_path_filter = false;
@@ -315,6 +355,7 @@ struct ExistingEntrySnapshot {
     int64_t modified_time_ns = 0;
     std::string platform_file_id;
     int64_t parser_version = PARSER_VERSION;
+    int64_t dependency_parser_version = DEPENDENCY_PARSER_VERSION;
     int64_t classifier_version = CLASSIFIER_VERSION;
     ParseStatus parse_status = ParseStatus::NotParsed;
 };
@@ -436,5 +477,6 @@ const char *to_string(DirtyState value);
 const char *to_string(DirtyReason value);
 const char *to_string(ParseStatus value);
 const char *to_string(ScriptLanguage value);
+const char *to_string(DependencyKind value);
 
 } // namespace gotool::project_scanner

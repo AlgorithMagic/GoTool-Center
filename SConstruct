@@ -83,10 +83,26 @@ elif platform in {"linux", "macos"}:
         "-Wpedantic",
     ])
 
-cpp_sources = sorted(path.as_posix() for path in Path("src").rglob("*.cpp"))
+doc_data_source = Path("src") / "gen" / "doc_data.gen.cpp"
+cpp_sources = sorted(
+    path.as_posix()
+    for path in Path("src").rglob("*.cpp")
+    if path != doc_data_source
+)
 
 if not cpp_sources:
     raise RuntimeError("No C++ source files found under src/")
+
+if build_target == "template_debug":
+    doc_class_files = sorted(path.as_posix() for path in Path("doc_classes").glob("*.xml"))
+    if doc_class_files:
+        doc_gen_dir = doc_data_source.parent
+        doc_gen_dir.mkdir(parents=True, exist_ok=True)
+        doc_data = env.GodotCPPDocData(
+            doc_data_source.as_posix(),
+            source=doc_class_files,
+        )
+        cpp_sources.append(doc_data)
 
 object_dir = Path("build") / "scons" / platform / build_target / arch
 object_dir.mkdir(parents=True, exist_ok=True)

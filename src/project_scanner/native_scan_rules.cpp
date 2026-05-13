@@ -690,6 +690,10 @@ DirtyCheckResult detect_dirty_state(
         return { DirtyState::Dirty, DirtyReason::ParserVersionChanged };
     }
 
+    if (existing.dependency_parser_version != DEPENDENCY_PARSER_VERSION) {
+        return { DirtyState::Dirty, DirtyReason::DependencyParserVersionChanged };
+    }
+
     if (existing.classifier_version != CLASSIFIER_VERSION) {
         return { DirtyState::Dirty, DirtyReason::ClassifierVersionChanged };
     }
@@ -884,6 +888,7 @@ const char *to_string(DirtyReason value) {
         case DirtyReason::ModifiedTimeChanged: return "modified_time_changed";
         case DirtyReason::FileIdentityChanged: return "file_identity_changed";
         case DirtyReason::ParserVersionChanged: return "parser_version_changed";
+        case DirtyReason::DependencyParserVersionChanged: return "dependency_parser_version_changed";
         case DirtyReason::ClassifierVersionChanged: return "classifier_version_changed";
         case DirtyReason::PriorParseFailedRetry: return "prior_parse_failed_retry";
         case DirtyReason::WatcherInvalidated: return "watcher_invalidated";
@@ -910,6 +915,33 @@ const char *to_string(ScriptLanguage value) {
         case ScriptLanguage::CSharp: return "CSharp";
         case ScriptLanguage::Unknown:
         default: return "";
+    }
+}
+
+const char *to_string(DependencyKind value) {
+    switch (value) {
+        case DependencyKind::PreloadPath: return "preload_path";
+        case DependencyKind::LoadPath: return "load_path";
+        case DependencyKind::ResourceLoaderLoadPath: return "resource_loader_load_path";
+        case DependencyKind::GDLoadPath: return "gd_load_path";
+        case DependencyKind::ExtendsPath: return "extends_path";
+        case DependencyKind::ExtendsClass: return "extends_class";
+        case DependencyKind::ClassNameDeclaration: return "class_name_declaration";
+        case DependencyKind::ConstPreloadAlias: return "const_preload_alias";
+        case DependencyKind::TypedVarRef: return "typed_var_ref";
+        case DependencyKind::TypedParamRef: return "typed_param_ref";
+        case DependencyKind::TypedReturnRef: return "typed_return_ref";
+        case DependencyKind::TypedArrayElementRef: return "typed_array_element_ref";
+        case DependencyKind::TypedDictionaryRef: return "typed_dictionary_ref";
+        case DependencyKind::ExportTypeRef: return "export_type_ref";
+        case DependencyKind::SignalTypeRef: return "signal_type_ref";
+        case DependencyKind::NewClassInstantiation: return "new_class_instantiation";
+        case DependencyKind::SceneNodePath: return "scene_node_path";
+        case DependencyKind::ResourceUIDRef: return "resource_uid_ref";
+        case DependencyKind::DynamicLoad: return "dynamic_load";
+        case DependencyKind::UnresolvedSymbol: return "unresolved_symbol";
+        case DependencyKind::Unknown:
+        default: return "unknown";
     }
 }
 

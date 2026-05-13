@@ -22,6 +22,7 @@ using gotool::database::Database;
 using gotool::database::Statement;
 using gotool::project_scanner::DirtyReason;
 using gotool::project_scanner::DirtyState;
+using gotool::project_scanner::DependencyKind;
 using gotool::project_scanner::EntryKind;
 using gotool::project_scanner::EnumerationOptions;
 using gotool::project_scanner::EnumerationResult;
@@ -73,6 +74,43 @@ int64_t query_int64(Database &database, const std::string &sql) {
     Statement statement = database.prepare(sql);
     REQUIRE(statement.step() == Statement::StepResult::Row);
     return statement.column_int64(0);
+}
+
+int64_t query_int64_with_bind(Database &database, const std::string &sql, int64_t value) {
+    Statement statement = database.prepare(sql);
+    statement.bind_int64(1, value);
+    REQUIRE(statement.step() == Statement::StepResult::Row);
+    return statement.column_int64(0);
+}
+
+int64_t count_dependencies_of_kind(
+    const gotool::project_scanner::ScriptParseResult &result,
+    DependencyKind kind
+) {
+    int64_t count = 0;
+    for (const gotool::project_scanner::ScriptDependencyRecord &dependency : result.dependencies) {
+        if (dependency.dependency_kind == kind) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+bool has_dependency_target_path(
+    const gotool::project_scanner::ScriptParseResult &result,
+    DependencyKind kind,
+    const std::string &target_path
+) {
+    for (const gotool::project_scanner::ScriptDependencyRecord &dependency : result.dependencies) {
+        if (dependency.dependency_kind != kind || !dependency.target_project_relative_path.has_value()) {
+            continue;
+        }
+
+        if (dependency.target_project_relative_path.value() == target_path) {
+            return true;
+        }
+    }
+    return false;
 }
 
 ExistingEntrySnapshot snapshot_for(
@@ -282,6 +320,21 @@ TEST_CASE("dirty_detector_honors_parser_and_classifier_versions") {
             false
         ).reason == DirtyReason::ClassifierVersionChanged
     );
+
+    ExistingEntrySnapshot dependency_parser_snapshot = snapshot_for(EntryKind::File, 10, 20);
+    dependency_parser_snapshot.dependency_parser_version =
+        gotool::project_scanner::DEPENDENCY_PARSER_VERSION - 1;
+
+    CHECK(
+        gotool::project_scanner::detect_dirty_state(
+            EntryKind::File,
+            10,
+            20,
+            "",
+            dependency_parser_snapshot,
+            false
+        ).reason == DirtyReason::DependencyParserVersionChanged
+    );
 }
 
 TEST_CASE("gdscript_parser_detects_class_name_and_extends") {
@@ -321,6 +374,156 @@ TEST_CASE("csharp_parser_detects_global_class_and_base_type") {
     CHECK(result.language == ScriptLanguage::CSharp);
     CHECK(result.class_name == "Enemy");
     CHECK(result.direct_base_type == "CharacterBody3D");
+}
+
+TEST_CASE("gdscript_parser_extracts_dependency_patterns") {
+    TemporaryRoot root(make_temp_root("gdscript_dependency_patterns"));
+    const std::filesystem::path script = root.path / "player.gd";
+    write_text(
+        script,
+        "class_name Player\n"
+        "extends \"res://actors/base_player.gd\"\n"
+        "const EnemyScene = preload(\"res://scenes/enemy.tscn\")\n"
+        "var hero: Hero\n"
+        "var squad: Array[Enemy]\n"
+        "signal damaged(target: Enemy)\n"
+        "@export var scene: PackedScene\n"
+        "func spawn(target: Enemy) -> Enemy:\n"
+        "    var packed = load(\"res://scenes/enemy.tscn\")\n"
+        "    var dynamic_scene = load(target)\n"
+        "    Enemy.new()\n"
+        "    var uid = \"uid://111122223333\"\n"
+        "    var node_path = NodePath(\"Player/Camera\")\n"
+    );
+
+    const gotool::project_scanner::ScriptParseResult result =
+        gotool::project_scanner::parse_script_header(script, ".gd");
+
+    CHECK(result.status == ParseStatus::ParsedClass);
+    CHECK(result.class_name == "Player");
+    CHECK(result.tokens_generated > 0);
+    CHECK(result.dependency_parse_ms >= 0);
+    CHECK(count_dependencies_of_kind(result, DependencyKind::ClassNameDeclaration) >= 1);
+    CHECK(count_dependencies_of_kind(result, DependencyKind::ExtendsPath) >= 1);
+    CHECK(count_dependencies_of_kind(result, DependencyKind::ConstPreloadAlias) >= 1);
+    CHECK(count_dependencies_of_kind(result, DependencyKind::TypedVarRef) >= 1);
+    CHECK(count_dependencies_of_kind(result, DependencyKind::TypedArrayElementRef) >= 1);
+    CHECK(count_dependencies_of_kind(result, DependencyKind::TypedParamRef) >= 1);
+    CHECK(count_dependencies_of_kind(result, DependencyKind::TypedReturnRef) >= 1);
+    CHECK(count_dependencies_of_kind(result, DependencyKind::SignalTypeRef) >= 1);
+    CHECK(count_dependencies_of_kind(result, DependencyKind::ExportTypeRef) >= 1);
+    CHECK(count_dependencies_of_kind(result, DependencyKind::NewClassInstantiation) >= 1);
+    CHECK(count_dependencies_of_kind(result, DependencyKind::SceneNodePath) >= 1);
+    CHECK(count_dependencies_of_kind(result, DependencyKind::ResourceUIDRef) >= 1);
+    CHECK(count_dependencies_of_kind(result, DependencyKind::DynamicLoad) >= 1);
+    CHECK(has_dependency_target_path(result, DependencyKind::LoadPath, "scenes/enemy.tscn"));
+    CHECK(has_dependency_target_path(result, DependencyKind::PreloadPath, "scenes/enemy.tscn"));
+}
+
+TEST_CASE("gdscript_parser_ignores_comments_and_handles_escaped_and_multiline_strings") {
+    TemporaryRoot root(make_temp_root("gdscript_comments_strings"));
+    const std::filesystem::path script = root.path / "comment_guard.gd";
+    write_text(
+        script,
+        "class_name CommentGuard\n"
+        "extends Node\n"
+        "var text = \"literal # not comment and escaped quote \\\"ok\\\"\"\n"
+        "var blob = \"\"\"\n"
+        "load(\"res://ignored_from_multiline.tscn\")\n"
+        "\"\"\"\n"
+        "# preload(\"res://ignored_from_comment.tscn\")\n"
+        "var keep = preload(\"res://kept.tscn\") # preload(\"res://ignored_trailing.tscn\")\n"
+    );
+
+    const gotool::project_scanner::ScriptParseResult result =
+        gotool::project_scanner::parse_script_header(script, ".gd");
+
+    CHECK(result.status == ParseStatus::ParsedClass);
+    CHECK(count_dependencies_of_kind(result, DependencyKind::PreloadPath) == 1);
+    CHECK(has_dependency_target_path(result, DependencyKind::PreloadPath, "kept.tscn"));
+    CHECK(count_dependencies_of_kind(result, DependencyKind::LoadPath) == 0);
+}
+
+TEST_CASE("csharp_parser_extracts_globalclass_load_and_export_dependencies") {
+    TemporaryRoot root(make_temp_root("csharp_dependency_patterns"));
+    const std::filesystem::path script = root.path / "EnemyFactory.cs";
+    write_text(
+        script,
+        "using Godot;\n"
+        "[GlobalClass]\n"
+        "public partial class EnemyFactory : Node\n"
+        "{\n"
+        "    [Export]\n"
+        "    public PackedScene EnemyScene { get; set; }\n"
+        "\n"
+        "    public void Spawn()\n"
+        "    {\n"
+        "        var enemyScene = GD.Load<PackedScene>(\"res://scenes/enemy.tscn\");\n"
+        "        var enemyScript = ResourceLoader.Load<CSharpScript>(\"res://scripts/enemy.cs\");\n"
+        "        PackedScene.Instantiate<Enemy>();\n"
+        "    }\n"
+        "}\n"
+    );
+
+    const gotool::project_scanner::ScriptParseResult result =
+        gotool::project_scanner::parse_script_header(script, ".cs");
+
+    CHECK(result.status == ParseStatus::ParsedClass);
+    CHECK(result.class_name == "EnemyFactory");
+    CHECK(count_dependencies_of_kind(result, DependencyKind::ClassNameDeclaration) >= 1);
+    CHECK(count_dependencies_of_kind(result, DependencyKind::ExtendsClass) >= 1);
+    CHECK(count_dependencies_of_kind(result, DependencyKind::ExportTypeRef) >= 1);
+    CHECK(count_dependencies_of_kind(result, DependencyKind::GDLoadPath) >= 1);
+    CHECK(count_dependencies_of_kind(result, DependencyKind::ResourceLoaderLoadPath) >= 1);
+    CHECK(count_dependencies_of_kind(result, DependencyKind::NewClassInstantiation) >= 1);
+    CHECK(has_dependency_target_path(result, DependencyKind::GDLoadPath, "scenes/enemy.tscn"));
+    CHECK(has_dependency_target_path(result, DependencyKind::ResourceLoaderLoadPath, "scripts/enemy.cs"));
+}
+
+TEST_CASE("script_parser_limits_are_enforced_without_throwing") {
+    TemporaryRoot root(make_temp_root("parser_limit_enforcement"));
+    const std::filesystem::path script = root.path / "limit.gd";
+
+    std::string text;
+    text += "class_name LimitCase\n";
+    text += "extends Node\n";
+    for (int32_t i = 0; i < 20; ++i) {
+        text += "var dep" + std::to_string(i) + " = preload(\"res://dep" + std::to_string(i) + ".tscn\")\n";
+    }
+    write_text(script, text);
+
+    const gotool::project_scanner::ScriptParseResult result =
+        gotool::project_scanner::parse_script_header(script, ".gd", 1024, 1024 * 128, 1024 * 8, 3);
+
+    CHECK(result.status == ParseStatus::ParsedClass);
+    CHECK(result.limit_exceeded);
+    CHECK(static_cast<int64_t>(result.dependencies.size()) == 3);
+}
+
+TEST_CASE("script_parser_handles_large_synthetic_script_throughput") {
+    TemporaryRoot root(make_temp_root("parser_large_synthetic"));
+    const std::filesystem::path script = root.path / "large.gd";
+
+    std::string text;
+    text += "class_name LargeSynthetic\n";
+    text += "extends Node\n";
+    for (int32_t i = 0; i < 1500; ++i) {
+        text += "var enemy_" + std::to_string(i) + ": Enemy\n";
+        text += "var scene_" + std::to_string(i) + " = preload(\"res://scenes/enemy.tscn\")\n";
+    }
+    write_text(script, text);
+
+    const gotool::project_scanner::ScriptParseResult result =
+        gotool::project_scanner::parse_script_header(script, ".gd", 5000, 1024 * 1024, 1024 * 256, 1024 * 64);
+
+    CHECK(result.status == ParseStatus::ParsedClass);
+    CHECK(result.tokens_generated > 0);
+    CHECK(result.lines_scanned > 1000);
+    CHECK(result.bytes_read > 0);
+    CHECK(result.dependency_parse_ms >= 0);
+    CHECK(result.tokenizer_ms >= 0);
+    CHECK_FALSE(result.limit_exceeded);
+    CHECK(static_cast<int64_t>(result.dependencies.size()) >= 500);
 }
 
 TEST_CASE("malformed_script_reports_no_class_without_throwing") {
@@ -443,6 +646,8 @@ TEST_CASE("scanner_schema_v3_supports_batched_writes_tombstones_and_paging") {
     );
     CHECK(clean_metrics.rows_clean_refreshed >= 3);
     CHECK(clean_metrics.sqlite_stage_insert_ms >= 0);
+    CHECK(clean_metrics.scripts_dependency_parsed == 0);
+    CHECK(clean_metrics.scripts_dependency_skipped_clean >= 1);
 
     write_text(root.path / "scripts" / "player.gd", "class_name Player\nextends Resource\n");
     const gotool::project_scanner::ScanResultSummary one_script = pipeline.run(options);
@@ -452,6 +657,253 @@ TEST_CASE("scanner_schema_v3_supports_batched_writes_tombstones_and_paging") {
     const gotool::project_scanner::ScanResultSummary deleted = pipeline.run(options);
     CHECK(deleted.entries_deleted >= 1);
     CHECK(query_int64(database, "SELECT COUNT(*) FROM deleted_entries WHERE project_id = 1;") >= 1);
+}
+
+TEST_CASE("native_scan_pipeline_reparses_when_dependency_parser_version_changes") {
+    TemporaryRoot root(make_temp_root("dependency_parser_version_invalidation"));
+    TemporaryRoot db_root(make_temp_root("dependency_parser_version_invalidation_db"));
+
+    write_text(root.path / "project.godot", "[application]\n");
+    write_text(
+        root.path / "scripts" / "player.gd",
+        "class_name Player\n"
+        "extends Node\n"
+        "var enemy_scene = preload(\"res://scenes/enemy.tscn\")\n"
+    );
+    write_text(root.path / "scenes" / "enemy.tscn", "[gd_scene format=3]\n");
+
+    Database database((db_root.path / "scanner.sqlite3").string());
+    gotool::database::create_schema(database, 0);
+    database.exec(
+        "INSERT INTO projects ("
+        "id, project_uid, display_name, root_absolute_path, root_canonical_path, "
+        "project_file_absolute_path, godot_version, identity_source, first_seen_unix, last_seen_unix, "
+        "created_at_unix, updated_at_unix"
+        ") VALUES ("
+        "1, 'scanner-dependency-parser-version', 'scanner-dependency-parser-version', '" + root.path.generic_string() + "', '" +
+        root.path.generic_string() + "', '" + (root.path / "project.godot").generic_string() +
+        "', '4.6.0-stable', 'test', 1, 1, 1, 1"
+        ");"
+    );
+
+    NativeScanPipeline pipeline(database);
+    ScanOptions options;
+    options.project_id = 1;
+    options.project_root = root.path;
+    options.include_hidden = true;
+    options.persist_to_database = true;
+    options.collect_custom_classes = true;
+    options.collect_script_dependencies = true;
+
+    const gotool::project_scanner::ScanResultSummary cold = pipeline.run(options);
+    CHECK(cold.scripts_parsed == 1);
+
+    const int64_t player_file_id = query_int64(
+        database,
+        "SELECT id FROM project_files WHERE project_id = 1 AND project_relative_path = 'scripts/player.gd' LIMIT 1;"
+    );
+
+    Statement force_old_dependency_parser_version = database.prepare(R"sql(
+        UPDATE project_files
+        SET dependency_parser_version = 0
+        WHERE project_id = ?1 AND id = ?2;
+    )sql");
+    force_old_dependency_parser_version.bind_int64(1, 1);
+    force_old_dependency_parser_version.bind_int64(2, player_file_id);
+    force_old_dependency_parser_version.step_done();
+
+    const gotool::project_scanner::ScanResultSummary rescanned = pipeline.run(options);
+    CHECK(rescanned.scripts_parsed == 1);
+
+    CHECK(
+        query_int64(
+            database,
+            "SELECT dependency_parser_version FROM project_files "
+            "WHERE project_id = 1 AND id = " + std::to_string(player_file_id) + ";"
+        ) == gotool::project_scanner::DEPENDENCY_PARSER_VERSION
+    );
+
+    Statement reason = database.prepare(R"sql(
+        SELECT dirty_reason
+        FROM project_files
+        WHERE project_id = ?1
+          AND id = ?2
+          AND scan_generation = ?3
+        LIMIT 1;
+    )sql");
+    reason.bind_int64(1, 1);
+    reason.bind_int64(2, player_file_id);
+    reason.bind_int64(3, rescanned.scan_generation);
+    REQUIRE(reason.step() == Statement::StepResult::Row);
+    CHECK(reason.column_text(0) == "dependency_parser_version_changed");
+
+    ScanRepository repository(database);
+    const ScanMetrics metrics = repository.get_scan_metrics(1, rescanned.scan_run_id);
+    CHECK(metrics.scripts_dependency_parsed == 1);
+}
+
+TEST_CASE("scanner_dependency_graph_delete_replace_and_resolution_behaviour") {
+    TemporaryRoot root(make_temp_root("scanner_dependency_graph"));
+    TemporaryRoot db_root(make_temp_root("scanner_dependency_graph_db"));
+
+    write_text(root.path / "project.godot", "[application]\n");
+    write_text(root.path / "scenes" / "enemy.tscn", "[gd_scene format=3]\n");
+    write_text(root.path / "scripts" / "enemy.gd", "class_name Enemy\nextends Node\n");
+    write_text(
+        root.path / "scripts" / "spawner.gd",
+        "class_name Spawner\n"
+        "extends Node\n"
+        "const EnemyScene = preload(\"res://scenes/enemy.tscn\")\n"
+        "var target: Enemy\n"
+        "func spawn() -> Enemy:\n"
+        "    return Enemy.new()\n"
+    );
+
+    Database database((db_root.path / "scanner.sqlite3").string());
+    gotool::database::create_schema(database, 0);
+    database.exec(
+        "INSERT INTO projects ("
+        "id, project_uid, display_name, root_absolute_path, root_canonical_path, "
+        "project_file_absolute_path, godot_version, identity_source, first_seen_unix, last_seen_unix, "
+        "created_at_unix, updated_at_unix"
+        ") VALUES ("
+        "1, 'scanner-dependency-graph', 'scanner-dependency-graph', '" + root.path.generic_string() + "', '" +
+        root.path.generic_string() + "', '" + (root.path / "project.godot").generic_string() +
+        "', '4.6.0-stable', 'test', 1, 1, 1, 1"
+        ");"
+    );
+
+    NativeScanPipeline pipeline(database);
+    ScanOptions options;
+    options.project_id = 1;
+    options.project_root = root.path;
+    options.include_hidden = true;
+    options.persist_to_database = true;
+    options.collect_custom_classes = true;
+    options.collect_script_dependencies = true;
+
+    pipeline.run(options);
+
+    const int64_t spawner_id = query_int64(
+        database,
+        "SELECT id FROM project_files WHERE project_id = 1 AND project_relative_path = 'scripts/spawner.gd' LIMIT 1;"
+    );
+    const int64_t enemy_id = query_int64(
+        database,
+        "SELECT id FROM project_files WHERE project_id = 1 AND project_relative_path = 'scripts/enemy.gd' LIMIT 1;"
+    );
+
+    CHECK(
+        query_int64(
+            database,
+            "SELECT COUNT(*) FROM script_dependencies "
+            "WHERE project_id = 1 AND source_script_file_id = " + std::to_string(spawner_id) +
+            " AND dependency_kind = 'const_preload_alias';"
+        ) == 1
+    );
+
+    CHECK(
+        query_int64(
+            database,
+            "SELECT COUNT(*) FROM script_dependencies "
+            "WHERE project_id = 1 AND source_script_file_id = " + std::to_string(spawner_id) +
+            " AND target_class_name = 'Enemy' "
+            "AND target_file_id = " + std::to_string(enemy_id) +
+            " AND is_resolved = 1;"
+        ) >= 1
+    );
+
+    CHECK(
+        query_int64(
+            database,
+            "SELECT COUNT(*) FROM script_dependencies "
+            "WHERE project_id = 1 AND source_script_file_id = " + std::to_string(spawner_id) +
+            " AND parser_version = " + std::to_string(gotool::project_scanner::DEPENDENCY_PARSER_VERSION) + ";"
+        ) >= 1
+    );
+
+    ScanRepository repository(database);
+    CHECK_FALSE(repository.list_dependencies_for_script(1, spawner_id).empty());
+    CHECK_FALSE(repository.list_dependents_of_file(1, enemy_id).empty());
+    CHECK_FALSE(repository.list_dependents_of_class(1, "Enemy").empty());
+    CHECK(repository.list_dynamic_dependencies(1).size() >= 0);
+    CHECK(repository.list_dependency_cycles(1).size() >= 0);
+    CHECK(repository.get_dependency_graph_slice(1, spawner_id, 2).size() >= 1);
+
+    write_text(
+        root.path / "scripts" / "spawner.gd",
+        "class_name Spawner\n"
+        "extends Node\n"
+        "func spawn() -> void:\n"
+        "    return\n"
+    );
+    pipeline.run(options);
+    CHECK(
+        query_int64(
+            database,
+            "SELECT COUNT(*) FROM script_dependencies "
+            "WHERE project_id = 1 AND source_script_file_id = " + std::to_string(spawner_id) +
+            " AND dependency_kind = 'const_preload_alias';"
+        ) == 0
+    );
+
+    write_text(
+        root.path / "scripts" / "spawner.gd",
+        "class_name Spawner\n"
+        "extends Node\n"
+        "var target: MissingEnemy\n"
+        "func spawn(target: MissingEnemy) -> MissingEnemy:\n"
+        "    return MissingEnemy.new()\n"
+    );
+    pipeline.run(options);
+    CHECK(
+        query_int64(
+            database,
+            "SELECT COUNT(*) FROM script_dependencies "
+            "WHERE project_id = 1 AND source_script_file_id = " + std::to_string(spawner_id) +
+            " AND target_class_name = 'MissingEnemy' AND is_resolved = 0;"
+        ) >= 1
+    );
+    CHECK_FALSE(repository.list_unresolved_dependencies(1).empty());
+
+    write_text(root.path / "scripts" / "missing_enemy.gd", "class_name MissingEnemy\nextends Node\n");
+    pipeline.run(options);
+    CHECK(
+        query_int64(
+            database,
+            "SELECT COUNT(*) FROM script_dependencies "
+            "WHERE project_id = 1 AND source_script_file_id = " + std::to_string(spawner_id) +
+            " AND target_class_name = 'MissingEnemy' AND is_resolved = 0;"
+        ) >= 1
+    );
+
+    const int64_t missing_enemy_id = query_int64(
+        database,
+        "SELECT id FROM project_files WHERE project_id = 1 AND project_relative_path = 'scripts/missing_enemy.gd' LIMIT 1;"
+    );
+
+    // Reparse the source script so class-based targets can resolve to the new file.
+    write_text(
+        root.path / "scripts" / "spawner.gd",
+        "class_name Spawner\n"
+        "extends Node\n"
+        "var target: MissingEnemy\n"
+        "func spawn(target: MissingEnemy) -> MissingEnemy:\n"
+        "    return MissingEnemy.new()\n"
+        "# touch for reparse\n"
+    );
+    pipeline.run(options);
+
+    CHECK(
+        query_int64(
+            database,
+            "SELECT COUNT(*) FROM script_dependencies "
+            "WHERE project_id = 1 AND source_script_file_id = " + std::to_string(spawner_id) +
+            " AND target_class_name = 'MissingEnemy' "
+            "AND target_file_id = " + std::to_string(missing_enemy_id) +
+            " AND is_resolved = 1;"
+        ) >= 1
+    );
 }
 
 TEST_CASE("native_directory_enumerator_stops_when_cancel_already_requested") {

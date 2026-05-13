@@ -70,6 +70,14 @@ bool table_has_column(Database &database, const std::string &table_name, const s
     return false;
 }
 
+bool table_exists(Database &database, const std::string &table_name) {
+    Statement statement = database.prepare(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1 LIMIT 1;"
+    );
+    statement.bind_text(1, table_name);
+    return statement.step() == Statement::StepResult::Row;
+}
+
 int64_t register_project(
     ProjectRegistryRepository &registry,
     const std::string &project_uid,
@@ -109,6 +117,44 @@ TEST_CASE("schema_v2_creation_is_idempotent") {
     CHECK(table_has_column(database, "project_autoloads", "project_id"));
     CHECK(table_has_column(database, "project_custom_classes", "project_id"));
     CHECK(table_has_column(database, "project_scan_unknowns", "project_id"));
+}
+
+TEST_CASE("schema_v5_dependency_tables_and_metrics_columns_exist") {
+    TemporaryDatabaseFile temp_db(make_temp_database_path("schema_v5_dependency"));
+
+    Database database(temp_db.path.string());
+    gotool::database::create_schema(database, 0);
+
+    CHECK(query_single_int64(database, "PRAGMA user_version;") == gotool::database::GOTOOL_SCHEMA_VERSION);
+    CHECK(table_exists(database, "script_symbols"));
+    CHECK(table_exists(database, "script_dependencies"));
+    CHECK(table_has_column(database, "project_files", "dependency_parser_version"));
+
+    CHECK(table_has_column(database, "script_dependencies", "source_script_file_id"));
+    CHECK(table_has_column(database, "script_dependencies", "source_symbol_id"));
+    CHECK(table_has_column(database, "script_dependencies", "target_file_id"));
+    CHECK(table_has_column(database, "script_dependencies", "target_project_relative_path"));
+    CHECK(table_has_column(database, "script_dependencies", "target_class_name"));
+    CHECK(table_has_column(database, "script_dependencies", "target_resource_uid"));
+    CHECK(table_has_column(database, "script_dependencies", "dependency_kind"));
+    CHECK(table_has_column(database, "script_dependencies", "is_dynamic"));
+    CHECK(table_has_column(database, "script_dependencies", "is_resolved"));
+    CHECK(table_has_column(database, "script_dependencies", "parser_version"));
+    CHECK(table_has_column(database, "script_dependencies", "scan_generation"));
+
+    CHECK(table_has_column(database, "scan_metrics", "dependency_parse_ms"));
+    CHECK(table_has_column(database, "scan_metrics", "tokenizer_ms"));
+    CHECK(table_has_column(database, "scan_metrics", "dependency_sqlite_stage_ms"));
+    CHECK(table_has_column(database, "scan_metrics", "dependency_resolution_ms"));
+    CHECK(table_has_column(database, "scan_metrics", "dependency_records_created"));
+    CHECK(table_has_column(database, "scan_metrics", "unresolved_dependency_count"));
+    CHECK(table_has_column(database, "scan_metrics", "dynamic_dependency_count"));
+    CHECK(table_has_column(database, "scan_metrics", "scripts_dependency_parsed"));
+    CHECK(table_has_column(database, "scan_metrics", "scripts_dependency_skipped_clean"));
+    CHECK(table_has_column(database, "scan_metrics", "parser_bytes_read"));
+    CHECK(table_has_column(database, "scan_metrics", "parser_lines_scanned"));
+    CHECK(table_has_column(database, "scan_metrics", "parser_tokens_generated"));
+    CHECK(table_has_column(database, "scan_metrics", "parser_limit_exceeded_count"));
 }
 
 TEST_CASE("same_relative_path_can_exist_across_multiple_projects") {

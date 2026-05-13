@@ -133,6 +133,7 @@ void create_schema_v2_tables(Database &database) {
             dirty_state TEXT NOT NULL DEFAULT 'dirty',
             dirty_reason TEXT NOT NULL DEFAULT 'new_path',
             parser_version INTEGER NOT NULL DEFAULT 1,
+            dependency_parser_version INTEGER NOT NULL DEFAULT 1,
             classifier_version INTEGER NOT NULL DEFAULT 1,
             parse_status TEXT NOT NULL DEFAULT 'not_parsed',
             is_deleted INTEGER NOT NULL DEFAULT 0,
@@ -213,6 +214,90 @@ void create_schema_v2_tables(Database &database) {
     )sql");
 
     database.exec(R"sql(
+        CREATE TABLE IF NOT EXISTS script_symbols (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER NOT NULL,
+            script_file_id INTEGER NOT NULL,
+            class_name TEXT NOT NULL,
+            language TEXT NOT NULL DEFAULT '',
+            parser_version INTEGER NOT NULL DEFAULT 1,
+            last_parsed_generation INTEGER NOT NULL DEFAULT 0,
+            last_seen_scan_run_id INTEGER,
+            created_at_unix INTEGER NOT NULL DEFAULT 0,
+            updated_at_unix INTEGER NOT NULL DEFAULT 0,
+            UNIQUE(project_id, script_file_id),
+            FOREIGN KEY (project_id)
+                REFERENCES projects(id)
+                ON DELETE CASCADE,
+            FOREIGN KEY (script_file_id)
+                REFERENCES project_files(id)
+                ON DELETE CASCADE,
+            FOREIGN KEY (last_seen_scan_run_id)
+                REFERENCES project_scan_runs(id)
+                ON DELETE SET NULL
+        );
+    )sql");
+
+    database.exec(R"sql(
+        CREATE TABLE IF NOT EXISTS script_dependencies (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER NOT NULL,
+            source_script_file_id INTEGER NOT NULL,
+            source_symbol_id INTEGER,
+            target_file_id INTEGER,
+            target_project_relative_path TEXT,
+            target_class_name TEXT,
+            target_resource_uid TEXT,
+            dependency_kind TEXT NOT NULL CHECK (
+                dependency_kind IN (
+                    'preload_path',
+                    'load_path',
+                    'resource_loader_load_path',
+                    'gd_load_path',
+                    'extends_path',
+                    'extends_class',
+                    'class_name_declaration',
+                    'const_preload_alias',
+                    'typed_var_ref',
+                    'typed_param_ref',
+                    'typed_return_ref',
+                    'typed_array_element_ref',
+                    'typed_dictionary_ref',
+                    'export_type_ref',
+                    'signal_type_ref',
+                    'new_class_instantiation',
+                    'scene_node_path',
+                    'resource_uid_ref',
+                    'dynamic_load',
+                    'unresolved_symbol',
+                    'unknown'
+                )
+            ),
+            reference_text TEXT NOT NULL DEFAULT '',
+            source_line INTEGER NOT NULL DEFAULT 0,
+            source_column INTEGER NOT NULL DEFAULT 0,
+            confidence REAL NOT NULL DEFAULT 0,
+            is_dynamic INTEGER NOT NULL DEFAULT 0,
+            is_resolved INTEGER NOT NULL DEFAULT 0,
+            parser_version INTEGER NOT NULL DEFAULT 1,
+            scan_generation INTEGER NOT NULL DEFAULT 0,
+            created_at_unix INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (project_id)
+                REFERENCES projects(id)
+                ON DELETE CASCADE,
+            FOREIGN KEY (source_script_file_id)
+                REFERENCES project_files(id)
+                ON DELETE CASCADE,
+            FOREIGN KEY (source_symbol_id)
+                REFERENCES script_symbols(id)
+                ON DELETE SET NULL,
+            FOREIGN KEY (target_file_id)
+                REFERENCES project_files(id)
+                ON DELETE SET NULL
+        );
+    )sql");
+
+    database.exec(R"sql(
         CREATE TABLE IF NOT EXISTS project_scan_unknowns (
             id INTEGER PRIMARY KEY,
             project_id INTEGER NOT NULL,
@@ -256,6 +341,8 @@ void create_schema_v2_tables(Database &database) {
             script_candidate_ms INTEGER NOT NULL DEFAULT 0,
             classification_ms INTEGER NOT NULL DEFAULT 0,
             script_parse_ms INTEGER NOT NULL DEFAULT 0,
+            dependency_parse_ms INTEGER NOT NULL DEFAULT 0,
+            tokenizer_ms INTEGER NOT NULL DEFAULT 0,
             sqlite_write_ms INTEGER NOT NULL DEFAULT 0,
             sqlite_stage_insert_ms INTEGER NOT NULL DEFAULT 0,
             sqlite_file_merge_ms INTEGER NOT NULL DEFAULT 0,
@@ -263,6 +350,8 @@ void create_schema_v2_tables(Database &database) {
             sqlite_parent_resolve_ms INTEGER NOT NULL DEFAULT 0,
             sqlite_parse_status_ms INTEGER NOT NULL DEFAULT 0,
             sqlite_custom_class_ms INTEGER NOT NULL DEFAULT 0,
+            dependency_sqlite_stage_ms INTEGER NOT NULL DEFAULT 0,
+            dependency_resolution_ms INTEGER NOT NULL DEFAULT 0,
             sqlite_tombstone_ms INTEGER NOT NULL DEFAULT 0,
             sqlite_deleted_reconcile_ms INTEGER NOT NULL DEFAULT 0,
             sqlite_metrics_write_ms INTEGER NOT NULL DEFAULT 0,
@@ -281,8 +370,17 @@ void create_schema_v2_tables(Database &database) {
             scripts_candidates INTEGER NOT NULL DEFAULT 0,
             scripts_parsed INTEGER NOT NULL DEFAULT 0,
             scripts_skipped_clean INTEGER NOT NULL DEFAULT 0,
+            scripts_dependency_parsed INTEGER NOT NULL DEFAULT 0,
+            scripts_dependency_skipped_clean INTEGER NOT NULL DEFAULT 0,
             script_lines_scanned INTEGER NOT NULL DEFAULT 0,
+            parser_lines_scanned INTEGER NOT NULL DEFAULT 0,
             bytes_read INTEGER NOT NULL DEFAULT 0,
+            parser_bytes_read INTEGER NOT NULL DEFAULT 0,
+            parser_tokens_generated INTEGER NOT NULL DEFAULT 0,
+            parser_limit_exceeded_count INTEGER NOT NULL DEFAULT 0,
+            dependency_records_created INTEGER NOT NULL DEFAULT 0,
+            unresolved_dependency_count INTEGER NOT NULL DEFAULT 0,
+            dynamic_dependency_count INTEGER NOT NULL DEFAULT 0,
             entry_record_count INTEGER NOT NULL DEFAULT 0,
             path_arena_bytes INTEGER NOT NULL DEFAULT 0,
             existing_snapshot_count INTEGER NOT NULL DEFAULT 0,
@@ -423,6 +521,36 @@ void create_schema_v2_indexes(Database &database) {
     )sql");
 
     database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_script_symbols_project_id_class_name
+        ON script_symbols(project_id, class_name);
+    )sql");
+
+    database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_script_dependencies_project_id_source_script_file_id
+        ON script_dependencies(project_id, source_script_file_id);
+    )sql");
+
+    database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_script_dependencies_project_id_target_file_id
+        ON script_dependencies(project_id, target_file_id);
+    )sql");
+
+    database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_script_dependencies_project_id_target_class_name
+        ON script_dependencies(project_id, target_class_name);
+    )sql");
+
+    database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_script_dependencies_project_id_dependency_kind
+        ON script_dependencies(project_id, dependency_kind);
+    )sql");
+
+    database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_script_dependencies_project_id_is_resolved
+        ON script_dependencies(project_id, is_resolved);
+    )sql");
+
+    database.exec(R"sql(
         CREATE INDEX IF NOT EXISTS idx_project_scan_unknowns_project_id_extension
         ON project_scan_unknowns(project_id, extension);
     )sql");
@@ -453,6 +581,7 @@ void ensure_schema_v3_columns(Database &database) {
     add_column_if_missing(database, "project_files", "dirty_state TEXT NOT NULL DEFAULT 'dirty'");
     add_column_if_missing(database, "project_files", "dirty_reason TEXT NOT NULL DEFAULT 'new_path'");
     add_column_if_missing(database, "project_files", "parser_version INTEGER NOT NULL DEFAULT 1");
+    add_column_if_missing(database, "project_files", "dependency_parser_version INTEGER NOT NULL DEFAULT 1");
     add_column_if_missing(database, "project_files", "classifier_version INTEGER NOT NULL DEFAULT 1");
     add_column_if_missing(database, "project_files", "parse_status TEXT NOT NULL DEFAULT 'not_parsed'");
     add_column_if_missing(database, "project_files", "is_deleted INTEGER NOT NULL DEFAULT 0");
@@ -473,15 +602,28 @@ void ensure_schema_v3_columns(Database &database) {
     add_column_if_missing(database, "scan_metrics", "sqlite_parent_resolve_ms INTEGER NOT NULL DEFAULT 0");
     add_column_if_missing(database, "scan_metrics", "sqlite_parse_status_ms INTEGER NOT NULL DEFAULT 0");
     add_column_if_missing(database, "scan_metrics", "sqlite_custom_class_ms INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "dependency_sqlite_stage_ms INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "dependency_resolution_ms INTEGER NOT NULL DEFAULT 0");
     add_column_if_missing(database, "scan_metrics", "sqlite_tombstone_ms INTEGER NOT NULL DEFAULT 0");
     add_column_if_missing(database, "scan_metrics", "sqlite_deleted_reconcile_ms INTEGER NOT NULL DEFAULT 0");
     add_column_if_missing(database, "scan_metrics", "sqlite_metrics_write_ms INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "dependency_parse_ms INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "tokenizer_ms INTEGER NOT NULL DEFAULT 0");
     add_column_if_missing(database, "scan_metrics", "rows_clean_refreshed INTEGER NOT NULL DEFAULT 0");
     add_column_if_missing(database, "scan_metrics", "script_lines_scanned INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "parser_lines_scanned INTEGER NOT NULL DEFAULT 0");
     add_column_if_missing(database, "scan_metrics", "entry_record_count INTEGER NOT NULL DEFAULT 0");
     add_column_if_missing(database, "scan_metrics", "path_arena_bytes INTEGER NOT NULL DEFAULT 0");
     add_column_if_missing(database, "scan_metrics", "existing_snapshot_count INTEGER NOT NULL DEFAULT 0");
     add_column_if_missing(database, "scan_metrics", "parsed_script_count INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "scripts_dependency_parsed INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "scripts_dependency_skipped_clean INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "parser_bytes_read INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "parser_tokens_generated INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "parser_limit_exceeded_count INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "dependency_records_created INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "unresolved_dependency_count INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "dynamic_dependency_count INTEGER NOT NULL DEFAULT 0");
     add_column_if_missing(database, "scan_metrics", "sqlite_statement_steps INTEGER NOT NULL DEFAULT 0");
 }
 

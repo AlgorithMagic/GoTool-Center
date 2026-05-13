@@ -81,6 +81,34 @@ struct CustomClassRow {
     ScanGeneration last_parsed_generation = 0;
 };
 
+struct ScriptDependencyRow {
+    int64_t id = 0;
+    int64_t project_id = 0;
+    int64_t source_script_file_id = 0;
+    std::optional<int64_t> source_symbol_id;
+    std::optional<int64_t> target_file_id;
+    std::string target_project_relative_path;
+    std::string target_class_name;
+    std::string target_resource_uid;
+    std::string dependency_kind;
+    std::string reference_text;
+    int64_t source_line = 0;
+    int64_t source_column = 0;
+    double confidence = 0.0;
+    bool is_dynamic = false;
+    bool is_resolved = false;
+    int64_t parser_version = 0;
+    ScanGeneration scan_generation = 0;
+    int64_t created_at_unix = 0;
+};
+
+struct DependencyCycleRow {
+    int64_t source_script_file_id = 0;
+    int64_t cycle_to_script_file_id = 0;
+    std::string cycle_path;
+    int64_t hop_count = 0;
+};
+
 struct TransparentStringHash {
     using is_transparent = void;
 
@@ -151,6 +179,17 @@ public:
         int64_t offset,
         int64_t limit,
         const std::string &sort
+    ) const;
+    std::vector<ScriptDependencyRow> list_dependencies_for_script(int64_t project_id, int64_t script_file_id) const;
+    std::vector<ScriptDependencyRow> list_dependents_of_file(int64_t project_id, int64_t target_file_id) const;
+    std::vector<ScriptDependencyRow> list_dependents_of_class(int64_t project_id, const std::string &class_name) const;
+    std::vector<ScriptDependencyRow> list_unresolved_dependencies(int64_t project_id) const;
+    std::vector<ScriptDependencyRow> list_dynamic_dependencies(int64_t project_id) const;
+    std::vector<DependencyCycleRow> list_dependency_cycles(int64_t project_id) const;
+    std::vector<ScriptDependencyRow> get_dependency_graph_slice(
+        int64_t project_id,
+        int64_t root_script_file_id,
+        int64_t depth
     ) const;
     ScanMetrics get_scan_metrics(int64_t project_id, int64_t scan_run_id) const;
     std::string get_scan_status(int64_t project_id, int64_t scan_run_id) const;

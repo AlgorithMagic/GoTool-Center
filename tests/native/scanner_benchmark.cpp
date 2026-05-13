@@ -181,6 +181,8 @@ std::string scenario_json(const BenchmarkScenarioResult &scenario) {
         "      \"dirty_check_ms\": " + std::to_string(scenario.metrics.dirty_check_ms) + ",\n"
         "      \"script_candidate_ms\": " + std::to_string(scenario.metrics.script_candidate_ms) + ",\n"
         "      \"script_parse_ms\": " + std::to_string(scenario.metrics.script_parse_ms) + ",\n"
+        "      \"dependency_parse_ms\": " + std::to_string(scenario.metrics.dependency_parse_ms) + ",\n"
+        "      \"tokenizer_ms\": " + std::to_string(scenario.metrics.tokenizer_ms) + ",\n"
         "      \"sqlite_write_ms\": " + std::to_string(scenario.metrics.sqlite_write_ms) + ",\n"
         "      \"sqlite_stage_insert_ms\": " + std::to_string(scenario.metrics.sqlite_stage_insert_ms) + ",\n"
         "      \"sqlite_file_merge_ms\": " + std::to_string(scenario.metrics.sqlite_file_merge_ms) + ",\n"
@@ -188,6 +190,8 @@ std::string scenario_json(const BenchmarkScenarioResult &scenario) {
         "      \"sqlite_parent_resolve_ms\": " + std::to_string(scenario.metrics.sqlite_parent_resolve_ms) + ",\n"
         "      \"sqlite_parse_status_ms\": " + std::to_string(scenario.metrics.sqlite_parse_status_ms) + ",\n"
         "      \"sqlite_custom_class_ms\": " + std::to_string(scenario.metrics.sqlite_custom_class_ms) + ",\n"
+        "      \"dependency_sqlite_stage_ms\": " + std::to_string(scenario.metrics.dependency_sqlite_stage_ms) + ",\n"
+        "      \"dependency_resolution_ms\": " + std::to_string(scenario.metrics.dependency_resolution_ms) + ",\n"
         "      \"sqlite_tombstone_ms\": " + std::to_string(scenario.metrics.sqlite_tombstone_ms) + ",\n"
         "      \"sqlite_deleted_reconcile_ms\": " + std::to_string(scenario.metrics.sqlite_deleted_reconcile_ms) + ",\n"
         "      \"godot_materialization_ms\": " + std::to_string(scenario.metrics.godot_materialization_ms) + ",\n"
@@ -204,6 +208,17 @@ std::string scenario_json(const BenchmarkScenarioResult &scenario) {
         "      \"scripts_candidates\": " + std::to_string(scenario.metrics.scripts_candidates) + ",\n"
         "      \"scripts_parsed\": " + std::to_string(scenario.metrics.scripts_parsed) + ",\n"
         "      \"scripts_skipped_clean\": " + std::to_string(scenario.metrics.scripts_skipped_clean) + ",\n"
+        "      \"scripts_dependency_parsed\": " + std::to_string(scenario.metrics.scripts_dependency_parsed) + ",\n"
+        "      \"scripts_dependency_skipped_clean\": " + std::to_string(scenario.metrics.scripts_dependency_skipped_clean) + ",\n"
+        "      \"script_lines_scanned\": " + std::to_string(scenario.metrics.script_lines_scanned) + ",\n"
+        "      \"parser_lines_scanned\": " + std::to_string(scenario.metrics.parser_lines_scanned) + ",\n"
+        "      \"bytes_read\": " + std::to_string(scenario.metrics.bytes_read) + ",\n"
+        "      \"parser_bytes_read\": " + std::to_string(scenario.metrics.parser_bytes_read) + ",\n"
+        "      \"parser_tokens_generated\": " + std::to_string(scenario.metrics.parser_tokens_generated) + ",\n"
+        "      \"parser_limit_exceeded_count\": " + std::to_string(scenario.metrics.parser_limit_exceeded_count) + ",\n"
+        "      \"dependency_records_created\": " + std::to_string(scenario.metrics.dependency_records_created) + ",\n"
+        "      \"unresolved_dependency_count\": " + std::to_string(scenario.metrics.unresolved_dependency_count) + ",\n"
+        "      \"dynamic_dependency_count\": " + std::to_string(scenario.metrics.dynamic_dependency_count) + ",\n"
         "      \"entry_record_count\": " + std::to_string(scenario.metrics.entry_record_count) + ",\n"
         "      \"path_arena_bytes\": " + std::to_string(scenario.metrics.path_arena_bytes) + ",\n"
         "      \"existing_snapshot_count\": " + std::to_string(scenario.metrics.existing_snapshot_count) + ",\n"
@@ -214,6 +229,28 @@ std::string scenario_json(const BenchmarkScenarioResult &scenario) {
 }
 
 } // namespace
+
+TEST_CASE("scanner_benchmark_json_includes_dependency_metric_fields") {
+    BenchmarkScenarioResult scenario;
+    scenario.scenario = "smoke";
+    scenario.summary.status = "completed";
+    scenario.metrics.dependency_parse_ms = 11;
+    scenario.metrics.tokenizer_ms = 7;
+    scenario.metrics.scripts_dependency_parsed = 3;
+    scenario.metrics.scripts_dependency_skipped_clean = 4;
+    scenario.metrics.dependency_records_created = 5;
+    scenario.metrics.unresolved_dependency_count = 6;
+    scenario.metrics.dynamic_dependency_count = 2;
+
+    const std::string json = scenario_json(scenario);
+    CHECK(json.find("\"dependency_parse_ms\"") != std::string::npos);
+    CHECK(json.find("\"tokenizer_ms\"") != std::string::npos);
+    CHECK(json.find("\"scripts_dependency_parsed\"") != std::string::npos);
+    CHECK(json.find("\"scripts_dependency_skipped_clean\"") != std::string::npos);
+    CHECK(json.find("\"dependency_records_created\"") != std::string::npos);
+    CHECK(json.find("\"unresolved_dependency_count\"") != std::string::npos);
+    CHECK(json.find("\"dynamic_dependency_count\"") != std::string::npos);
+}
 
 TEST_CASE("scanner_benchmark_synthetic_large_project [benchmark][.]") {
     if (std::getenv("GOTOOL_RUN_SCANNER_BENCHMARK") == nullptr) {
@@ -242,6 +279,7 @@ TEST_CASE("scanner_benchmark_synthetic_large_project [benchmark][.]") {
     std::vector<BenchmarkScenarioResult> scenarios;
     ScanOptions enumerate_only = options;
     enumerate_only.collect_custom_classes = false;
+    enumerate_only.collect_script_dependencies = false;
     scenarios.push_back(run_native_no_db_scenario(pipeline, "enumerate_only", enumerate_only));
 
     scenarios.push_back(run_persisted_scenario(pipeline, database, "db_full_first_scan", options));
@@ -249,6 +287,7 @@ TEST_CASE("scanner_benchmark_synthetic_large_project [benchmark][.]") {
     ScanOptions enumerate_plus_dirty = options;
     enumerate_plus_dirty.persist_to_database = false;
     enumerate_plus_dirty.collect_custom_classes = false;
+    enumerate_plus_dirty.collect_script_dependencies = false;
     scenarios.push_back(run_native_no_db_scenario(pipeline, "enumerate_plus_dirty_check", enumerate_plus_dirty));
 
     ScanOptions enumerate_plus_parse = options;

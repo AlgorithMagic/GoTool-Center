@@ -1,0 +1,219 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="GodotProjectContext" inherits="RefCounted" api_type="extension" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://raw.githubusercontent.com/godotengine/godot/master/doc/class.xsd">
+	<brief_description>
+		Native API entry point for GoTool Center project registration, scanning, and inventory queries.
+	</brief_description>
+	<description>
+		[GodotProjectContext] bridges editor-side scripts to the native GoTool Center backend. It owns database initialization, project identity registration, asynchronous and fast inventory scans, file watcher integration, and read APIs over persisted scan results.
+
+		Call [method initialize_database] before starting scans or querying inventory. Methods return empty arrays or dictionaries on failure, and [method get_last_error] provides the latest error message when available.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="benchmark_native_scan">
+			<return type="Dictionary" />
+			<param index="0" name="options" type="Dictionary" />
+			<description>
+				Runs the native scanner in benchmark mode without materializing file rows into Godot dictionaries. The [param options] dictionary supports [code]include_hidden[/code], [code]include_custom_classes[/code], [code]force_rescan[/code], [code]load_existing_snapshot[/code], [code]include_database_snapshot[/code], [code]use_dirty_path_filter[/code], [code]dirty_paths[/code], [code]enable_parallel_traversal[/code], and [code]max_parallel_workers[/code].
+
+				Returns a dictionary containing [code]scan_summary[/code], [code]metrics[/code], [code]entry_record_count[/code], [code]parsed_script_count[/code], [code]files_seen[/code], [code]dirs_seen[/code], and [code]materialized[/code] (always [code]false[/code]).
+			</description>
+		</method>
+		<method name="cancel_scan">
+			<return type="bool" />
+			<param index="0" name="scan_id" type="int" />
+			<description>
+				Requests cancellation for the active asynchronous scan with id [param scan_id]. Returns [code]true[/code] only when the scan is currently queued or running.
+			</description>
+		</method>
+		<method name="consume_watcher_changes">
+			<return type="Array" />
+			<description>
+				Drains pending file watcher events and returns them as an array of dictionaries. Each event includes [code]project_relative_path[/code], [code]path[/code] ([code]res://[/code] form), [code]removed[/code], and [code]is_directory[/code].
+			</description>
+		</method>
+		<method name="export_full_inventory_for_debug" qualifiers="const">
+			<return type="Dictionary" />
+			<description>
+				Exports the entire persisted inventory for debugging. Returns [code]files[/code], [code]custom_classes[/code], [code]file_count[/code], [code]custom_class_count[/code], and [code]scan_summary[/code].
+			</description>
+		</method>
+		<method name="get_custom_class_count" qualifiers="const">
+			<return type="int" />
+			<param index="0" name="filter" type="Dictionary" />
+			<description>
+				Returns the number of persisted custom class records matching [param filter]. Supported filter keys are [code]language[/code], [code]base_type[/code], and [code]search[/code].
+			</description>
+		</method>
+		<method name="get_custom_classes_page" qualifiers="const">
+			<return type="Array" />
+			<param index="0" name="offset" type="int" />
+			<param index="1" name="limit" type="int" />
+			<param index="2" name="sort" type="String" />
+			<param index="3" name="filter" type="Dictionary" />
+			<description>
+				Returns a page of persisted custom class rows. Uses [param offset] and [param limit] for paging, forwards [param sort] to the repository sort key, and applies [param filter] keys [code]language[/code], [code]base_type[/code], and [code]search[/code].
+			</description>
+		</method>
+		<method name="get_database_absolute_path" qualifiers="const">
+			<return type="String" />
+			<description>
+				Returns the resolved absolute filesystem path to the GoTool metadata database.
+			</description>
+		</method>
+		<method name="get_database_virtual_path" qualifiers="const">
+			<return type="String" />
+			<description>
+				Returns the virtualized database path when available ([code]user://[/code] or [code]res://[/code]), otherwise returns the absolute path string.
+			</description>
+		</method>
+		<method name="get_directory_children" qualifiers="const">
+			<return type="Array" />
+			<param index="0" name="directory_id" type="int" />
+			<param index="1" name="offset" type="int" />
+			<param index="2" name="limit" type="int" />
+			<param index="3" name="sort" type="String" />
+			<param index="4" name="filter" type="Dictionary" />
+			<description>
+				Returns a page of inventory rows whose parent directory is [param directory_id]. A negative [param directory_id] maps to the root level. Paging, sorting, and filter behavior are the same as [method get_files_page].
+			</description>
+		</method>
+		<method name="get_dirty_paths">
+			<return type="Array" />
+			<description>
+				Returns [code]res://[/code] paths derived from drained watcher events. Calling this method consumes the current pending watcher event queue.
+			</description>
+		</method>
+		<method name="get_file_count" qualifiers="const">
+			<return type="int" />
+			<param index="0" name="filter" type="Dictionary" />
+			<description>
+				Returns the number of persisted inventory entries matching [param filter]. Supported filter keys are [code]include_deleted[/code], [code]parent_id[/code], [code]is_directory[/code], [code]extension[/code], [code]file_type[/code], [code]godot_type[/code], and [code]search[/code].
+			</description>
+		</method>
+		<method name="get_file_details" qualifiers="const">
+			<return type="Dictionary" />
+			<param index="0" name="file_id" type="int" />
+			<description>
+				Returns a single persisted inventory row for [param file_id], including identifiers, path fields, file classification, timestamps, directory and hidden flags, and dirty-state metadata. Returns an empty dictionary when not found.
+			</description>
+		</method>
+		<method name="get_files_page" qualifiers="const">
+			<return type="Array" />
+			<param index="0" name="offset" type="int" />
+			<param index="1" name="limit" type="int" />
+			<param index="2" name="sort" type="String" />
+			<param index="3" name="filter" type="Dictionary" />
+			<description>
+				Returns a page of persisted inventory entries. Uses [param offset] and [param limit] for paging, forwards [param sort] to the repository sort key, and applies [param filter] keys [code]include_deleted[/code], [code]parent_id[/code], [code]is_directory[/code], [code]extension[/code], [code]file_type[/code], [code]godot_type[/code], and [code]search[/code].
+			</description>
+		</method>
+		<method name="get_last_error" qualifiers="const">
+			<return type="String" />
+			<description>
+				Returns the latest error message produced by this context, or an empty string when no error is recorded.
+			</description>
+		</method>
+		<method name="get_last_scan_results" qualifiers="const">
+			<return type="Dictionary" />
+			<description>
+				Returns the latest completed scan summary dictionary, including status and metrics when available.
+			</description>
+		</method>
+		<method name="get_project_summary" qualifiers="const">
+			<return type="Dictionary" />
+			<param index="0" name="project_id" type="int" />
+			<description>
+				Returns summary data for [param project_id], including project identity details and aggregate counts for files, autoloads, custom classes, and unknown entries.
+			</description>
+		</method>
+		<method name="get_scan_metrics" qualifiers="const">
+			<return type="Dictionary" />
+			<param index="0" name="scan_id" type="int" />
+			<description>
+				Returns detailed metrics for [param scan_id]. The dictionary includes timing breakdowns, counters, and status fields such as [code]scan_id[/code], [code]scan_run_id[/code], and [code]status[/code].
+			</description>
+		</method>
+		<method name="get_scan_status" qualifiers="const">
+			<return type="Dictionary" />
+			<param index="0" name="scan_id" type="int" />
+			<description>
+				Returns status information for [param scan_id]. For active scans, includes live summary fields, [code]started_at_unix[/code], [code]finished_at_unix[/code], [code]last_error[/code], and [code]metrics[/code]. For completed persisted scans, returns stored status and metrics.
+			</description>
+		</method>
+		<method name="get_watcher_status" qualifiers="const">
+			<return type="Dictionary" />
+			<description>
+				Returns watcher runtime state. The dictionary includes [code]running[/code], [code]supported[/code], [code]requires_full_rescan[/code], [code]backend[/code], [code]pending_events[/code], and optional [code]last_error[/code].
+			</description>
+		</method>
+		<method name="initialize_database">
+			<return type="bool" />
+			<description>
+				Initializes the GoTool metadata database under the OS data directory, creates required schema tables, registers the current project, and resolves database path fields. Returns [code]true[/code] on success.
+			</description>
+		</method>
+		<method name="list_projects" qualifiers="const">
+			<return type="Array" />
+			<description>
+				Returns all registered projects as dictionaries with identity, display name, root paths, Godot version, and first/last seen timestamps.
+			</description>
+		</method>
+		<method name="register_current_project">
+			<return type="int" />
+			<description>
+				Registers or refreshes the current [code]res://[/code] project in the database and returns its project id. The method reads or creates [code].godot/gotool_center/project.uid[/code], falling back to a path-derived identity when UID persistence is unavailable.
+			</description>
+		</method>
+		<method name="scan_current_project">
+			<return type="bool" />
+			<description>
+				Starts a persisted asynchronous scan with default options and blocks until that scan completes or fails. Returns [code]true[/code] only when the scan finishes with [code]completed[/code] status.
+			</description>
+		</method>
+		<method name="scan_current_project_fast">
+			<return type="Dictionary" />
+			<param index="0" name="options" type="Dictionary" />
+			<description>
+				Alias for [method scan_project_inventory_fast].
+			</description>
+		</method>
+		<method name="scan_project">
+			<return type="bool" />
+			<description>
+				Alias for [method scan_current_project].
+			</description>
+		</method>
+		<method name="scan_project_inventory_fast">
+			<return type="Dictionary" />
+			<param index="0" name="options" type="Dictionary" />
+			<description>
+				Runs a detailed non-persisted inventory scan and returns materialized results. The [param options] dictionary supports [code]include_hidden[/code], [code]include_custom_classes[/code], [code]materialize_files[/code], [code]materialize_custom_classes[/code], [code]include_autoloads[/code], [code]force_rescan[/code], [code]load_existing_snapshot[/code], [code]use_dirty_path_filter[/code], [code]dirty_paths[/code], [code]enable_parallel_traversal[/code], [code]max_parallel_workers[/code], and [code]max_results[/code].
+
+				Returns [code]files[/code], [code]autoloads[/code], [code]custom_classes[/code], [code]entry_record_count[/code], [code]custom_class_count[/code], [code]autoload_count[/code], [code]metrics[/code], and [code]scan_summary[/code].
+			</description>
+		</method>
+		<method name="start_scan">
+			<return type="Dictionary" />
+			<param index="0" name="options" type="Dictionary" />
+			<description>
+				Starts an asynchronous persisted scan and returns immediate scan metadata. The [param options] dictionary supports [code]include_hidden[/code], [code]force_rescan[/code], [code]include_custom_classes[/code], [code]include_deleted[/code], [code]load_existing_snapshot[/code], [code]prefer_watcher_dirty_paths[/code], [code]dirty_paths[/code], [code]enable_parallel_traversal[/code], and [code]max_parallel_workers[/code].
+
+				On success, returns [code]scan_id[/code], [code]scan_run_id[/code], [code]scan_generation[/code], [code]status[/code], and [code]started_at_unix[/code]. If another scan is already active, returns [code]status = "already_running"[/code] with the active scan identifiers.
+			</description>
+		</method>
+		<method name="start_watcher">
+			<return type="bool" />
+			<description>
+				Starts the project file watcher for the current project root. Returns [code]true[/code] when watcher startup succeeds.
+			</description>
+		</method>
+		<method name="stop_watcher">
+			<return type="void" />
+			<description>
+				Stops the project file watcher if it is active.
+			</description>
+		</method>
+	</methods>
+</class>
