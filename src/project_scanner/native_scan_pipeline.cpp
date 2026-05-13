@@ -21,6 +21,46 @@ int64_t elapsed_ms(std::chrono::steady_clock::time_point start, std::chrono::ste
     return std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
 }
 
+bool path_matches_prefix(std::string_view path, std::string_view prefix) {
+    if (prefix.empty()) {
+        return true;
+    }
+
+    if (path == prefix) {
+        return true;
+    }
+
+    return path.size() > prefix.size() &&
+           path.substr(0, prefix.size()) == prefix &&
+           path[prefix.size()] == '/';
+}
+
+std::vector<std::string> normalize_dirty_paths(const std::vector<std::string> &dirty_paths) {
+    std::vector<std::string> normalized;
+    normalized.reserve(dirty_paths.size());
+
+    for (const std::string &dirty_path : dirty_paths) {
+        const std::string normalized_path = normalize_project_path(dirty_path);
+        if (!normalized_path.empty()) {
+            normalized.push_back(normalized_path);
+        }
+    }
+
+    std::sort(normalized.begin(), normalized.end());
+    normalized.erase(std::unique(normalized.begin(), normalized.end()), normalized.end());
+    return normalized;
+}
+
+bool is_path_in_dirty_set(std::string_view path, const std::vector<std::string> &normalized_dirty_paths) {
+    for (const std::string &prefix : normalized_dirty_paths) {
+        if (path_matches_prefix(path, prefix)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 int64_t read_scalar_int64(Statement &statement) {
     if (statement.step() != Statement::StepResult::Row) {
         return 0;
@@ -514,9 +554,9 @@ void ScanRepository::write_scan_results(
         const std::string_view extension = arena.view(record.extension_offset, record.extension_length);
 
         std::string_view parent_project_path;
-        if (record.parent_record_index >= 0) {
-            const EntryRecord &parent = records[static_cast<size_t>(record.parent_record_index)];
-            parent_project_path = arena.view(parent.path_offset, parent.path_length);
+        const size_t parent_separator = project_path.rfind('/');
+        if (parent_separator != std::string_view::npos) {
+            parent_project_path = project_path.substr(0, parent_separator);
         }
 
         insert_stage.reset();
@@ -1244,7 +1284,7 @@ NativeScanResult NativeScanPipeline::run_detailed(const ScanOptions &options) {
         throw_if_cancel_requested(options.cancel_requested, metrics);
 
         const auto metadata_start = std::chrono::steady_clock::now();
-        if (repository.has_value()) {
+        if (repository.has_value() && options.load_existing_snapshot) {
             existing = repository->load_existing_entries(options.project_id);
         }
         metrics.existing_snapshot_count = static_cast<int64_t>(existing.size());
@@ -1273,6 +1313,9 @@ NativeScanResult NativeScanPipeline::run_detailed(const ScanOptions &options) {
         EnumerationOptions enumeration_options;
         enumeration_options.root = options.project_root;
         enumeration_options.include_hidden = options.include_hidden;
+        enumeration_options.enable_parallel_traversal = options.enable_parallel_traversal;
+        enumeration_options.deterministic_record_order = options.deterministic_record_order;
+        enumeration_options.max_parallel_workers = options.max_parallel_workers;
         enumeration_options.skip_policy = &skip_policy;
         enumeration_options.cancel_requested = options.cancel_requested;
 
@@ -1280,6 +1323,7 @@ NativeScanResult NativeScanPipeline::run_detailed(const ScanOptions &options) {
         const EnumerationResult enumeration_result =
             enumerator.enumerate(enumeration_options, result.arena, result.records);
         metrics.traversal_ms = elapsed_ms(traversal_start, std::chrono::steady_clock::now());
+        metrics.classification_ms = enumeration_result.classification_ms;
         metrics.files_seen = enumeration_result.files_seen;
         metrics.dirs_seen = enumeration_result.dirs_seen;
         metrics.dirs_skipped = enumeration_result.dirs_skipped;
@@ -1301,6 +1345,15 @@ NativeScanResult NativeScanPipeline::run_detailed(const ScanOptions &options) {
             metrics.entry_record_count = static_cast<int64_t>(result.records.size());
         }
 
+        const bool use_dirty_path_filter =
+            options.use_dirty_path_filter &&
+            !options.force_rescan &&
+            !options.dirty_paths.empty();
+        const std::vector<std::string> normalized_dirty_paths =
+            use_dirty_path_filter
+                ? normalize_dirty_paths(options.dirty_paths)
+                : std::vector<std::string>();
+
         const auto dirty_start = std::chrono::steady_clock::now();
         for (size_t i = 0; i < result.records.size(); ++i) {
             if ((i % 512) == 0) {
@@ -1319,6 +1372,24 @@ NativeScanResult NativeScanPipeline::run_detailed(const ScanOptions &options) {
             const auto found = existing.find(project_path);
             if (found != existing.end()) {
                 snapshot = found->second;
+            }
+
+            if (!normalized_dirty_paths.empty()) {
+                const bool in_dirty_path = is_path_in_dirty_set(project_path, normalized_dirty_paths);
+
+                if (!in_dirty_path && snapshot.has_value()) {
+                    record.dirty_state = DirtyState::Clean;
+                    record.dirty_reason = DirtyReason::None;
+                    ++metrics.entries_clean;
+                    continue;
+                }
+
+                if (in_dirty_path && snapshot.has_value()) {
+                    record.dirty_state = DirtyState::Dirty;
+                    record.dirty_reason = DirtyReason::WatcherInvalidated;
+                    ++metrics.entries_dirty;
+                    continue;
+                }
             }
 
             const DirtyCheckResult dirty = detect_dirty_state(
@@ -1379,6 +1450,7 @@ NativeScanResult NativeScanPipeline::run_detailed(const ScanOptions &options) {
         throw_if_cancel_requested(options.cancel_requested, metrics);
 
         if (options.collect_custom_classes) {
+            int64_t script_parse_ns_total = 0;
             for (size_t record_index : script_candidates) {
                 throw_if_cancel_requested(options.cancel_requested, metrics);
 
@@ -1389,23 +1461,25 @@ NativeScanResult NativeScanPipeline::run_detailed(const ScanOptions &options) {
                     result.arena.view(record.extension_offset, record.extension_length);
 
                 const std::string project_path(project_path_view);
-                const std::string extension(extension_view);
 
                 const auto parse_start = std::chrono::steady_clock::now();
                 ParsedScriptRecord parsed;
                 parsed.record_index = record_index;
                 parsed.project_relative_path = project_path;
-                parsed.extension = extension;
                 parsed.parse_result = parse_script_header(
                     options.project_root / std::filesystem::u8path(project_path),
                     extension_view
                 );
-                metrics.script_parse_ms += elapsed_ms(parse_start, std::chrono::steady_clock::now());
+                const auto parse_end = std::chrono::steady_clock::now();
+                script_parse_ns_total +=
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(parse_end - parse_start).count();
                 metrics.bytes_read += parsed.parse_result.bytes_read;
                 metrics.script_lines_scanned += parsed.parse_result.lines_scanned;
                 ++metrics.scripts_parsed;
                 result.parsed_scripts.push_back(std::move(parsed));
             }
+
+            metrics.script_parse_ms = script_parse_ns_total / 1'000'000LL;
         }
         metrics.parsed_script_count = static_cast<int64_t>(result.parsed_scripts.size());
 

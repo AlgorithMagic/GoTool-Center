@@ -8,6 +8,120 @@
 
 namespace gotool::database {
 
+namespace {
+
+struct PreparedInventoryStatements {
+    Statement upsert_project_file;
+    Statement delete_missing_project_files;
+    Statement upsert_autoload;
+    Statement delete_missing_autoloads;
+    Statement upsert_custom_class;
+    Statement delete_missing_custom_classes;
+    Statement upsert_unknown;
+    Statement delete_missing_unknowns;
+
+    explicit PreparedInventoryStatements(Database &database) :
+        upsert_project_file(database.prepare(
+            "INSERT INTO project_files ("
+            "project_id, project_relative_path, absolute_path, file_name, extension, file_type, godot_type, "
+            "size_bytes, modified_time_unix, is_directory, is_hidden, "
+            "first_seen_scan_run_id, last_seen_scan_run_id, created_at_unix, updated_at_unix"
+            ") VALUES ("
+            "?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12, ?13, ?13"
+            ") "
+            "ON CONFLICT(project_id, project_relative_path) DO UPDATE SET "
+            "absolute_path = excluded.absolute_path, "
+            "file_name = excluded.file_name, "
+            "extension = excluded.extension, "
+            "file_type = excluded.file_type, "
+            "godot_type = excluded.godot_type, "
+            "size_bytes = excluded.size_bytes, "
+            "modified_time_unix = excluded.modified_time_unix, "
+            "is_directory = excluded.is_directory, "
+            "is_hidden = excluded.is_hidden, "
+            "last_seen_scan_run_id = excluded.last_seen_scan_run_id, "
+            "updated_at_unix = excluded.updated_at_unix, "
+            "first_seen_scan_run_id = COALESCE(project_files.first_seen_scan_run_id, excluded.first_seen_scan_run_id);"
+        )),
+        delete_missing_project_files(database.prepare(
+            "DELETE FROM project_files "
+            "WHERE project_id = ?1 "
+            "  AND (last_seen_scan_run_id IS NULL OR last_seen_scan_run_id <> ?2);"
+        )),
+        upsert_autoload(database.prepare(
+            "INSERT INTO project_autoloads ("
+            "project_id, autoload_name, target_path, target_project_relative_path, is_singleton, "
+            "target_file_id, last_seen_scan_run_id, created_at_unix, updated_at_unix"
+            ") VALUES ("
+            "?1, ?2, ?3, ?4, ?5, "
+            "(SELECT id FROM project_files WHERE project_id = ?1 AND project_relative_path = ?4), "
+            "?6, ?7, ?7"
+            ") "
+            "ON CONFLICT(project_id, autoload_name) DO UPDATE SET "
+            "target_path = excluded.target_path, "
+            "target_project_relative_path = excluded.target_project_relative_path, "
+            "is_singleton = excluded.is_singleton, "
+            "target_file_id = (SELECT id FROM project_files WHERE project_id = excluded.project_id AND project_relative_path = excluded.target_project_relative_path), "
+            "last_seen_scan_run_id = excluded.last_seen_scan_run_id, "
+            "updated_at_unix = excluded.updated_at_unix;"
+        )),
+        delete_missing_autoloads(database.prepare(
+            "DELETE FROM project_autoloads "
+            "WHERE project_id = ?1 "
+            "  AND (last_seen_scan_run_id IS NULL OR last_seen_scan_run_id <> ?2);"
+        )),
+        upsert_custom_class(database.prepare(
+            "INSERT INTO project_custom_classes ("
+            "project_id, class_name, script_path, script_project_relative_path, language, base_type, "
+            "is_resource_type, is_node_type, script_file_id, last_seen_scan_run_id, created_at_unix, updated_at_unix"
+            ") VALUES ("
+            "?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, "
+            "(SELECT id FROM project_files WHERE project_id = ?1 AND project_relative_path = ?4), "
+            "?9, ?10, ?10"
+            ") "
+            "ON CONFLICT(project_id, class_name) DO UPDATE SET "
+            "script_path = excluded.script_path, "
+            "script_project_relative_path = excluded.script_project_relative_path, "
+            "language = excluded.language, "
+            "base_type = excluded.base_type, "
+            "is_resource_type = excluded.is_resource_type, "
+            "is_node_type = excluded.is_node_type, "
+            "script_file_id = (SELECT id FROM project_files WHERE project_id = excluded.project_id AND project_relative_path = excluded.script_project_relative_path), "
+            "last_seen_scan_run_id = excluded.last_seen_scan_run_id, "
+            "updated_at_unix = excluded.updated_at_unix;"
+        )),
+        delete_missing_custom_classes(database.prepare(
+            "DELETE FROM project_custom_classes "
+            "WHERE project_id = ?1 "
+            "  AND (last_seen_scan_run_id IS NULL OR last_seen_scan_run_id <> ?2);"
+        )),
+        upsert_unknown(database.prepare(
+            "INSERT INTO project_scan_unknowns ("
+            "project_id, project_relative_path, file_name, extension, observed_file_type, observed_godot_type, "
+            "last_seen_scan_run_id, created_at_unix, updated_at_unix"
+            ") VALUES ("
+            "?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8"
+            ") "
+            "ON CONFLICT(project_id, project_relative_path, extension) DO UPDATE SET "
+            "file_name = excluded.file_name, "
+            "observed_file_type = excluded.observed_file_type, "
+            "observed_godot_type = excluded.observed_godot_type, "
+            "last_seen_scan_run_id = excluded.last_seen_scan_run_id, "
+            "updated_at_unix = excluded.updated_at_unix;"
+        )),
+        delete_missing_unknowns(database.prepare(
+            "DELETE FROM project_scan_unknowns "
+            "WHERE project_id = ?1 "
+            "  AND (last_seen_scan_run_id IS NULL OR last_seen_scan_run_id <> ?2);"
+        )) {}
+
+    static constexpr int64_t statement_count() {
+        return 8;
+    }
+};
+
+} // namespace
+
 ProjectInventoryRepository::ProjectInventoryRepository(Database &database) :
     database_(&database) {
     if (database_ == nullptr) {
@@ -38,12 +152,16 @@ PersistedInventorySummary ProjectInventoryRepository::persist_inventory(
     summary.files_found = 0;
     summary.folders_found = 0;
     summary.unknown_entries = 0;
+    summary.sqlite_prepare_count = PreparedInventoryStatements::statement_count() + 2;
+    summary.sqlite_step_count = 0;
 
     const int64_t started_at_unix = current_unix_time();
     const int64_t observed_at_unix = started_at_unix;
 
     Transaction transaction(*database_);
+    PreparedInventoryStatements statements(*database_);
     summary.scan_run_id = create_scan_run(project_id, started_at_unix);
+    ++summary.sqlite_step_count;
 
     godot::Array unknown_entries;
     unknown_entries.clear();
@@ -64,7 +182,14 @@ PersistedInventorySummary ProjectInventoryRepository::persist_inventory(
             ++summary.files_found;
         }
 
-        upsert_project_file(project_id, file_entry, summary.scan_run_id, observed_at_unix);
+        upsert_project_file(
+            statements.upsert_project_file,
+            project_id,
+            file_entry,
+            summary.scan_run_id,
+            observed_at_unix
+        );
+        ++summary.sqlite_step_count;
 
         const godot::String file_type = variant_to_string(file_entry.get("file_type", ""));
 
@@ -79,7 +204,8 @@ PersistedInventorySummary ProjectInventoryRepository::persist_inventory(
         }
     }
 
-    delete_missing_project_files(project_id, summary.scan_run_id);
+    delete_missing_project_files(statements.delete_missing_project_files, project_id, summary.scan_run_id);
+    ++summary.sqlite_step_count;
 
     for (int64_t i = 0; i < autoloads.size(); ++i) {
         const godot::Variant value = autoloads[i];
@@ -88,10 +214,18 @@ PersistedInventorySummary ProjectInventoryRepository::persist_inventory(
             continue;
         }
 
-        upsert_autoload(project_id, value, summary.scan_run_id, observed_at_unix);
+        upsert_autoload(
+            statements.upsert_autoload,
+            project_id,
+            value,
+            summary.scan_run_id,
+            observed_at_unix
+        );
+        ++summary.sqlite_step_count;
     }
 
-    delete_missing_autoloads(project_id, summary.scan_run_id);
+    delete_missing_autoloads(statements.delete_missing_autoloads, project_id, summary.scan_run_id);
+    ++summary.sqlite_step_count;
 
     for (int64_t i = 0; i < custom_classes.size(); ++i) {
         const godot::Variant value = custom_classes[i];
@@ -100,19 +234,35 @@ PersistedInventorySummary ProjectInventoryRepository::persist_inventory(
             continue;
         }
 
-        upsert_custom_class(project_id, value, summary.scan_run_id, observed_at_unix);
+        upsert_custom_class(
+            statements.upsert_custom_class,
+            project_id,
+            value,
+            summary.scan_run_id,
+            observed_at_unix
+        );
+        ++summary.sqlite_step_count;
     }
 
-    delete_missing_custom_classes(project_id, summary.scan_run_id);
+    delete_missing_custom_classes(statements.delete_missing_custom_classes, project_id, summary.scan_run_id);
+    ++summary.sqlite_step_count;
 
     summary.unknown_entries = unknown_entries.size();
 
     for (int64_t i = 0; i < unknown_entries.size(); ++i) {
         const godot::Dictionary unknown_entry = unknown_entries[i];
-        upsert_unknown(project_id, unknown_entry, summary.scan_run_id, observed_at_unix);
+        upsert_unknown(
+            statements.upsert_unknown,
+            project_id,
+            unknown_entry,
+            summary.scan_run_id,
+            observed_at_unix
+        );
+        ++summary.sqlite_step_count;
     }
 
-    delete_missing_unknowns(project_id, summary.scan_run_id);
+    delete_missing_unknowns(statements.delete_missing_unknowns, project_id, summary.scan_run_id);
+    ++summary.sqlite_step_count;
 
     complete_scan_run(
         project_id,
@@ -121,6 +271,7 @@ PersistedInventorySummary ProjectInventoryRepository::persist_inventory(
         summary.files_found,
         summary.folders_found
     );
+    ++summary.sqlite_step_count;
 
     transaction.commit();
     return summary;
@@ -203,6 +354,7 @@ void ProjectInventoryRepository::complete_scan_run(
 }
 
 void ProjectInventoryRepository::upsert_project_file(
+    Statement &statement,
     int64_t project_id,
     const godot::Dictionary &entry,
     int64_t scan_run_id,
@@ -219,28 +371,8 @@ void ProjectInventoryRepository::upsert_project_file(
     const int64_t is_directory = variant_to_bool(entry.get("is_directory", false)) ? 1 : 0;
     const int64_t is_hidden = variant_to_bool(entry.get("is_hidden", false)) ? 1 : 0;
 
-    Statement statement = database_->prepare(
-        "INSERT INTO project_files ("
-        "project_id, project_relative_path, absolute_path, file_name, extension, file_type, godot_type, "
-        "size_bytes, modified_time_unix, is_directory, is_hidden, "
-        "first_seen_scan_run_id, last_seen_scan_run_id, created_at_unix, updated_at_unix"
-        ") VALUES ("
-        "?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12, ?13, ?13"
-        ") "
-        "ON CONFLICT(project_id, project_relative_path) DO UPDATE SET "
-        "absolute_path = excluded.absolute_path, "
-        "file_name = excluded.file_name, "
-        "extension = excluded.extension, "
-        "file_type = excluded.file_type, "
-        "godot_type = excluded.godot_type, "
-        "size_bytes = excluded.size_bytes, "
-        "modified_time_unix = excluded.modified_time_unix, "
-        "is_directory = excluded.is_directory, "
-        "is_hidden = excluded.is_hidden, "
-        "last_seen_scan_run_id = excluded.last_seen_scan_run_id, "
-        "updated_at_unix = excluded.updated_at_unix, "
-        "first_seen_scan_run_id = COALESCE(project_files.first_seen_scan_run_id, excluded.first_seen_scan_run_id);"
-    );
+    statement.reset();
+    statement.clear_bindings();
     statement.bind_int64(1, project_id);
     statement.bind_text(2, project_relative_path);
     statement.bind_text(3, absolute_path);
@@ -257,18 +389,16 @@ void ProjectInventoryRepository::upsert_project_file(
     statement.step_done();
 }
 
-void ProjectInventoryRepository::delete_missing_project_files(int64_t project_id, int64_t scan_run_id) {
-    Statement statement = database_->prepare(
-        "DELETE FROM project_files "
-        "WHERE project_id = ?1 "
-        "  AND (last_seen_scan_run_id IS NULL OR last_seen_scan_run_id <> ?2);"
-    );
+void ProjectInventoryRepository::delete_missing_project_files(Statement &statement, int64_t project_id, int64_t scan_run_id) {
+    statement.reset();
+    statement.clear_bindings();
     statement.bind_int64(1, project_id);
     statement.bind_int64(2, scan_run_id);
     statement.step_done();
 }
 
 void ProjectInventoryRepository::upsert_autoload(
+    Statement &statement,
     int64_t project_id,
     const godot::Dictionary &entry,
     int64_t scan_run_id,
@@ -279,23 +409,8 @@ void ProjectInventoryRepository::upsert_autoload(
     const std::string target_project_relative_path = to_utf8(variant_to_string(entry.get("target_project_relative_path", "")));
     const int64_t is_singleton = variant_to_bool(entry.get("is_singleton", true)) ? 1 : 0;
 
-    Statement statement = database_->prepare(
-        "INSERT INTO project_autoloads ("
-        "project_id, autoload_name, target_path, target_project_relative_path, is_singleton, "
-        "target_file_id, last_seen_scan_run_id, created_at_unix, updated_at_unix"
-        ") VALUES ("
-        "?1, ?2, ?3, ?4, ?5, "
-        "(SELECT id FROM project_files WHERE project_id = ?1 AND project_relative_path = ?4), "
-        "?6, ?7, ?7"
-        ") "
-        "ON CONFLICT(project_id, autoload_name) DO UPDATE SET "
-        "target_path = excluded.target_path, "
-        "target_project_relative_path = excluded.target_project_relative_path, "
-        "is_singleton = excluded.is_singleton, "
-        "target_file_id = (SELECT id FROM project_files WHERE project_id = excluded.project_id AND project_relative_path = excluded.target_project_relative_path), "
-        "last_seen_scan_run_id = excluded.last_seen_scan_run_id, "
-        "updated_at_unix = excluded.updated_at_unix;"
-    );
+    statement.reset();
+    statement.clear_bindings();
     statement.bind_int64(1, project_id);
     statement.bind_text(2, autoload_name);
     statement.bind_text(3, target_path);
@@ -306,18 +421,16 @@ void ProjectInventoryRepository::upsert_autoload(
     statement.step_done();
 }
 
-void ProjectInventoryRepository::delete_missing_autoloads(int64_t project_id, int64_t scan_run_id) {
-    Statement statement = database_->prepare(
-        "DELETE FROM project_autoloads "
-        "WHERE project_id = ?1 "
-        "  AND (last_seen_scan_run_id IS NULL OR last_seen_scan_run_id <> ?2);"
-    );
+void ProjectInventoryRepository::delete_missing_autoloads(Statement &statement, int64_t project_id, int64_t scan_run_id) {
+    statement.reset();
+    statement.clear_bindings();
     statement.bind_int64(1, project_id);
     statement.bind_int64(2, scan_run_id);
     statement.step_done();
 }
 
 void ProjectInventoryRepository::upsert_custom_class(
+    Statement &statement,
     int64_t project_id,
     const godot::Dictionary &entry,
     int64_t scan_run_id,
@@ -331,26 +444,8 @@ void ProjectInventoryRepository::upsert_custom_class(
     const int64_t is_resource_type = variant_to_bool(entry.get("is_resource_type", false)) ? 1 : 0;
     const int64_t is_node_type = variant_to_bool(entry.get("is_node_type", false)) ? 1 : 0;
 
-    Statement statement = database_->prepare(
-        "INSERT INTO project_custom_classes ("
-        "project_id, class_name, script_path, script_project_relative_path, language, base_type, "
-        "is_resource_type, is_node_type, script_file_id, last_seen_scan_run_id, created_at_unix, updated_at_unix"
-        ") VALUES ("
-        "?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, "
-        "(SELECT id FROM project_files WHERE project_id = ?1 AND project_relative_path = ?4), "
-        "?9, ?10, ?10"
-        ") "
-        "ON CONFLICT(project_id, class_name) DO UPDATE SET "
-        "script_path = excluded.script_path, "
-        "script_project_relative_path = excluded.script_project_relative_path, "
-        "language = excluded.language, "
-        "base_type = excluded.base_type, "
-        "is_resource_type = excluded.is_resource_type, "
-        "is_node_type = excluded.is_node_type, "
-        "script_file_id = (SELECT id FROM project_files WHERE project_id = excluded.project_id AND project_relative_path = excluded.script_project_relative_path), "
-        "last_seen_scan_run_id = excluded.last_seen_scan_run_id, "
-        "updated_at_unix = excluded.updated_at_unix;"
-    );
+    statement.reset();
+    statement.clear_bindings();
     statement.bind_int64(1, project_id);
     statement.bind_text(2, class_name);
     statement.bind_text(3, script_path);
@@ -364,18 +459,16 @@ void ProjectInventoryRepository::upsert_custom_class(
     statement.step_done();
 }
 
-void ProjectInventoryRepository::delete_missing_custom_classes(int64_t project_id, int64_t scan_run_id) {
-    Statement statement = database_->prepare(
-        "DELETE FROM project_custom_classes "
-        "WHERE project_id = ?1 "
-        "  AND (last_seen_scan_run_id IS NULL OR last_seen_scan_run_id <> ?2);"
-    );
+void ProjectInventoryRepository::delete_missing_custom_classes(Statement &statement, int64_t project_id, int64_t scan_run_id) {
+    statement.reset();
+    statement.clear_bindings();
     statement.bind_int64(1, project_id);
     statement.bind_int64(2, scan_run_id);
     statement.step_done();
 }
 
 void ProjectInventoryRepository::upsert_unknown(
+    Statement &statement,
     int64_t project_id,
     const godot::Dictionary &entry,
     int64_t scan_run_id,
@@ -387,20 +480,8 @@ void ProjectInventoryRepository::upsert_unknown(
     const std::string observed_file_type = to_utf8(variant_to_string(entry.get("observed_file_type", "Unknown")));
     const std::string observed_godot_type = to_utf8(variant_to_string(entry.get("observed_godot_type", "NGT")));
 
-    Statement statement = database_->prepare(
-        "INSERT INTO project_scan_unknowns ("
-        "project_id, project_relative_path, file_name, extension, observed_file_type, observed_godot_type, "
-        "last_seen_scan_run_id, created_at_unix, updated_at_unix"
-        ") VALUES ("
-        "?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8"
-        ") "
-        "ON CONFLICT(project_id, project_relative_path, extension) DO UPDATE SET "
-        "file_name = excluded.file_name, "
-        "observed_file_type = excluded.observed_file_type, "
-        "observed_godot_type = excluded.observed_godot_type, "
-        "last_seen_scan_run_id = excluded.last_seen_scan_run_id, "
-        "updated_at_unix = excluded.updated_at_unix;"
-    );
+    statement.reset();
+    statement.clear_bindings();
     statement.bind_int64(1, project_id);
     statement.bind_text(2, project_relative_path);
     statement.bind_text(3, file_name);
@@ -412,12 +493,9 @@ void ProjectInventoryRepository::upsert_unknown(
     statement.step_done();
 }
 
-void ProjectInventoryRepository::delete_missing_unknowns(int64_t project_id, int64_t scan_run_id) {
-    Statement statement = database_->prepare(
-        "DELETE FROM project_scan_unknowns "
-        "WHERE project_id = ?1 "
-        "  AND (last_seen_scan_run_id IS NULL OR last_seen_scan_run_id <> ?2);"
-    );
+void ProjectInventoryRepository::delete_missing_unknowns(Statement &statement, int64_t project_id, int64_t scan_run_id) {
+    statement.reset();
+    statement.clear_bindings();
     statement.bind_int64(1, project_id);
     statement.bind_int64(2, scan_run_id);
     statement.step_done();

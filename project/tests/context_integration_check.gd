@@ -145,6 +145,16 @@ func _initialize() -> void:
 	if int(second_metrics.get("scripts_parsed", -1)) != 0:
 		failures.append("No-change rescan should parse zero unchanged scripts.")
 
+	var native_benchmark: Dictionary = context.benchmark_native_scan(
+		{"include_custom_classes": true, "load_existing_snapshot": false}
+	)
+	if native_benchmark.is_empty():
+		failures.append("benchmark_native_scan() should return native metrics and counts.")
+	elif bool(native_benchmark.get("materialized", true)):
+		failures.append("benchmark_native_scan() should avoid Godot result materialization.")
+	elif not (native_benchmark.get("metrics", null) is Dictionary):
+		failures.append("benchmark_native_scan() should include a metrics dictionary.")
+
 	var debug_inventory: Dictionary = context.export_full_inventory_for_debug()
 	if debug_inventory.is_empty():
 		failures.append(

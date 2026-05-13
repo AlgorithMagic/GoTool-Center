@@ -14,6 +14,8 @@ struct PersistedInventorySummary {
     int64_t files_found = 0;
     int64_t folders_found = 0;
     int64_t unknown_entries = 0;
+    int64_t sqlite_prepare_count = 0;
+    int64_t sqlite_step_count = 0;
 };
 
 class ProjectInventoryRepository {
@@ -39,36 +41,40 @@ private:
     );
 
     void upsert_project_file(
+        Statement &statement,
         int64_t project_id,
         const godot::Dictionary &entry,
         int64_t scan_run_id,
         int64_t observed_at_unix
     );
-    void delete_missing_project_files(int64_t project_id, int64_t scan_run_id);
+    void delete_missing_project_files(Statement &statement, int64_t project_id, int64_t scan_run_id);
 
     void upsert_autoload(
+        Statement &statement,
         int64_t project_id,
         const godot::Dictionary &entry,
         int64_t scan_run_id,
         int64_t observed_at_unix
     );
-    void delete_missing_autoloads(int64_t project_id, int64_t scan_run_id);
+    void delete_missing_autoloads(Statement &statement, int64_t project_id, int64_t scan_run_id);
 
     void upsert_custom_class(
+        Statement &statement,
         int64_t project_id,
         const godot::Dictionary &entry,
         int64_t scan_run_id,
         int64_t observed_at_unix
     );
-    void delete_missing_custom_classes(int64_t project_id, int64_t scan_run_id);
+    void delete_missing_custom_classes(Statement &statement, int64_t project_id, int64_t scan_run_id);
 
     void upsert_unknown(
+        Statement &statement,
         int64_t project_id,
         const godot::Dictionary &entry,
         int64_t scan_run_id,
         int64_t observed_at_unix
     );
-    void delete_missing_unknowns(int64_t project_id, int64_t scan_run_id);
+    void delete_missing_unknowns(Statement &statement, int64_t project_id, int64_t scan_run_id);
 
     Database *database_ = nullptr;
 };

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cstring>
 #include <sstream>
 
 namespace gotool::project_scanner {
@@ -37,11 +38,53 @@ bool starts_with(std::string_view value, std::string_view prefix) {
     return value.size() >= prefix.size() && value.substr(0, prefix.size()) == prefix;
 }
 
+std::string_view file_name_view_from_normalized_path(std::string_view normalized_path) {
+    const size_t slash = normalized_path.rfind('/');
+    return slash == std::string::npos
+               ? normalized_path
+               : normalized_path.substr(slash + 1);
+}
+
+std::string extension_from_name_lower(std::string_view lower_name) {
+    const size_t dot = lower_name.rfind('.');
+
+    if (dot == std::string::npos || dot == 0 || dot + 1 >= lower_name.size()) {
+        return "";
+    }
+
+    return std::string(lower_name.substr(dot));
+}
+
+std::string normalize_prefix_for_internal(std::string value) {
+    std::replace(value.begin(), value.end(), '\\', '/');
+
+    while (!value.empty() && value.front() == '/') {
+        value.erase(value.begin());
+    }
+
+    while (starts_with(value, "./")) {
+        value.erase(0, 2);
+    }
+
+    while (!value.empty() && value.back() == '/') {
+        value.pop_back();
+    }
+
+    return value;
+}
+
 } // namespace
 
 uint32_t PathArena::append(std::string_view value) {
     const uint32_t offset = static_cast<uint32_t>(data_.size());
-    data_.insert(data_.end(), value.begin(), value.end());
+
+    if (value.empty()) {
+        return offset;
+    }
+
+    const size_t old_size = data_.size();
+    data_.resize(old_size + value.size());
+    std::memcpy(data_.data() + old_size, value.data(), value.size());
     return offset;
 }
 
@@ -103,8 +146,8 @@ SkipPolicy::SkipPolicy() {
     prefixes_.push_back(".godot/shader_cache");
 }
 
-bool SkipPolicy::should_skip(std::string_view project_relative_path) const {
-    const std::string normalized = normalize_project_path(project_relative_path);
+bool SkipPolicy::should_skip_normalized(std::string_view project_relative_path) const {
+    const std::string_view normalized = project_relative_path;
 
     for (const std::string &prefix : prefixes_) {
         if (normalized == prefix || starts_with(normalized, prefix + "/")) {
@@ -115,8 +158,24 @@ bool SkipPolicy::should_skip(std::string_view project_relative_path) const {
     return false;
 }
 
-void SkipPolicy::add_prefix(std::string prefix) {
+bool SkipPolicy::should_skip_external(std::string_view project_relative_path) const {
+    return should_skip_normalized(normalize_project_path(project_relative_path));
+}
+
+bool SkipPolicy::should_skip(std::string_view project_relative_path) const {
+    return should_skip_external(project_relative_path);
+}
+
+void SkipPolicy::add_prefix_normalized(std::string prefix) {
+    prefixes_.push_back(normalize_prefix_for_internal(std::move(prefix)));
+}
+
+void SkipPolicy::add_prefix_external(std::string prefix) {
     prefixes_.push_back(normalize_project_path(prefix));
+}
+
+void SkipPolicy::add_prefix(std::string prefix) {
+    add_prefix_external(std::move(prefix));
 }
 
 std::string normalize_project_path(std::string_view path) {
@@ -182,14 +241,9 @@ std::string lower_ascii(std::string_view value) {
 }
 
 std::string extension_from_path(std::string_view path) {
-    const std::string name = lower_ascii(file_name_from_path(path));
-    const size_t dot = name.rfind('.');
-
-    if (dot == std::string::npos || dot == 0 || dot + 1 >= name.size()) {
-        return "";
-    }
-
-    return name.substr(dot);
+    const std::string normalized = normalize_project_path(path);
+    const std::string name = lower_ascii(file_name_view_from_normalized_path(normalized));
+    return extension_from_name_lower(name);
 }
 
 std::string file_name_from_path(std::string_view path) {
@@ -199,122 +253,279 @@ std::string file_name_from_path(std::string_view path) {
 }
 
 bool is_script_extension(std::string_view extension) {
-    return extension == ".gd" || extension == ".cs";
+    const ExtensionId extension_id = extension_id_from_extension(extension);
+    return extension_id == ExtensionId::GD || extension_id == ExtensionId::CS;
 }
 
 ScriptLanguage language_from_extension(std::string_view extension) {
-    if (extension == ".gd") {
+    const ExtensionId extension_id = extension_id_from_extension(extension);
+
+    if (extension_id == ExtensionId::GD) {
         return ScriptLanguage::GDScript;
     }
 
-    if (extension == ".cs") {
+    if (extension_id == ExtensionId::CS) {
         return ScriptLanguage::CSharp;
     }
 
     return ScriptLanguage::Unknown;
 }
 
-FileTypeId classify_entry(std::string_view project_relative_path, EntryKind kind) {
-    if (kind == EntryKind::Directory) {
+ExtensionId extension_id_from_extension(std::string_view extension) {
+    if (extension.empty()) {
+        return ExtensionId::Unknown;
+    }
+
+    if (extension == ".tscn") return ExtensionId::TSCN;
+    if (extension == ".scn") return ExtensionId::SCN;
+    if (extension == ".tres") return ExtensionId::TRES;
+    if (extension == ".res") return ExtensionId::RES;
+    if (extension == ".gd") return ExtensionId::GD;
+    if (extension == ".cs") return ExtensionId::CS;
+    if (extension == ".sh") return ExtensionId::SH;
+    if (extension == ".gdshader") return ExtensionId::GDSHADER;
+    if (extension == ".gdshaderinc") return ExtensionId::GDSHADERINC;
+    if (extension == ".shader") return ExtensionId::SHADER;
+    if (extension == ".import") return ExtensionId::IMPORT;
+    if (extension == ".uid") return ExtensionId::UID;
+    if (extension == ".png") return ExtensionId::PNG;
+    if (extension == ".jpg") return ExtensionId::JPG;
+    if (extension == ".jpeg") return ExtensionId::JPEG;
+    if (extension == ".webp") return ExtensionId::WEBP;
+    if (extension == ".svg") return ExtensionId::SVG;
+    if (extension == ".bmp") return ExtensionId::BMP;
+    if (extension == ".gif") return ExtensionId::GIF;
+    if (extension == ".tga") return ExtensionId::TGA;
+    if (extension == ".exr") return ExtensionId::EXR;
+    if (extension == ".wav") return ExtensionId::WAV;
+    if (extension == ".ogg") return ExtensionId::OGG;
+    if (extension == ".opus") return ExtensionId::OPUS;
+    if (extension == ".mp3") return ExtensionId::MP3;
+    if (extension == ".flac") return ExtensionId::FLAC;
+    if (extension == ".otf") return ExtensionId::OTF;
+    if (extension == ".ttf") return ExtensionId::TTF;
+    if (extension == ".fnt") return ExtensionId::FNT;
+    if (extension == ".woff") return ExtensionId::WOFF;
+    if (extension == ".woff2") return ExtensionId::WOFF2;
+    if (extension == ".glb") return ExtensionId::GLB;
+    if (extension == ".gltf") return ExtensionId::GLTF;
+    if (extension == ".fbx") return ExtensionId::FBX;
+    if (extension == ".dae") return ExtensionId::DAE;
+    if (extension == ".blend") return ExtensionId::BLEND;
+    if (extension == ".meshlib") return ExtensionId::MESHLIB;
+    if (extension == ".godot") return ExtensionId::GODOT;
+    if (extension == ".cfg") return ExtensionId::CFG;
+    if (extension == ".ini") return ExtensionId::INI_FILE;
+    if (extension == ".conf") return ExtensionId::CONF_FILE;
+    if (extension == ".config") return ExtensionId::CONFIG_FILE;
+    if (extension == ".gdextension") return ExtensionId::GD_EXTENSION_FILE;
+    if (extension == ".json") return ExtensionId::JSON;
+    if (extension == ".csv") return ExtensionId::CSV;
+    if (extension == ".yaml") return ExtensionId::YAML;
+    if (extension == ".yml") return ExtensionId::YML;
+    if (extension == ".toml") return ExtensionId::TOML;
+    if (extension == ".xml") return ExtensionId::XML;
+    if (extension == ".dat") return ExtensionId::DAT;
+    if (extension == ".bytes") return ExtensionId::BYTES;
+    if (extension == ".md") return ExtensionId::MD;
+    if (extension == ".txt") return ExtensionId::TXT;
+    if (extension == ".rst") return ExtensionId::RST;
+    if (extension == ".adoc") return ExtensionId::ADOC;
+    if (extension == ".dll") return ExtensionId::DLL;
+    if (extension == ".so") return ExtensionId::SO;
+    if (extension == ".dylib") return ExtensionId::DYLIB;
+    if (extension == ".lib") return ExtensionId::LIB;
+    if (extension == ".a") return ExtensionId::STATICLIB_A;
+    if (extension == ".obj") return ExtensionId::OBJ;
+    if (extension == ".o") return ExtensionId::OBJECT_O;
+    if (extension == ".pdb") return ExtensionId::PDB;
+    if (extension == ".exp") return ExtensionId::EXP;
+    if (extension == ".db") return ExtensionId::DB;
+    if (extension == ".sqlite") return ExtensionId::SQLITE;
+    if (extension == ".sqlite3") return ExtensionId::SQLITE3;
+    if (extension == ".zip") return ExtensionId::ZIP;
+    if (extension == ".tar") return ExtensionId::TAR;
+    if (extension == ".gz") return ExtensionId::GZ;
+    if (extension == ".rar") return ExtensionId::RAR;
+    if (extension == ".7z") return ExtensionId::SEVEN_Z;
+    if (extension == ".node") return ExtensionId::NODE;
+    if (extension == ".object") return ExtensionId::OBJECT;
+    if (extension == ".resource") return ExtensionId::RESOURCE;
+    if (extension == ".md5") return ExtensionId::MD5;
+    if (extension == ".cache") return ExtensionId::CACHE;
+    if (extension == ".ase") return ExtensionId::ASE;
+    if (extension == ".aseprite") return ExtensionId::ASEPRITE;
+    if (extension == ".kra") return ExtensionId::KRA;
+    if (extension == ".psd") return ExtensionId::PSD;
+    if (extension == ".xcf") return ExtensionId::XCF;
+    if (extension == ".spp") return ExtensionId::SPP;
+    if (extension == ".bin") return ExtensionId::BIN;
+    if (extension == ".c") return ExtensionId::SRC_C;
+    if (extension == ".h") return ExtensionId::SRC_H;
+    if (extension == ".cpp") return ExtensionId::CPP;
+    if (extension == ".hpp") return ExtensionId::HPP;
+    if (extension == ".py") return ExtensionId::PY;
+    if (extension == ".js") return ExtensionId::JS;
+    if (extension == ".ts") return ExtensionId::TS;
+    if (extension == ".rs") return ExtensionId::RS;
+    if (extension == ".go") return ExtensionId::GO;
+    if (extension == ".java") return ExtensionId::JAVA;
+    if (extension == ".blend1") return ExtensionId::BLEND1;
+    if (extension == ".blend2") return ExtensionId::BLEND2;
+    if (extension == ".assbin") return ExtensionId::ASSBIN;
+    if (extension == ".remap") return ExtensionId::REMAP;
+
+    return ExtensionId::Unknown;
+}
+
+FileTypeId classify_entry_from_facts(const EntryFacts &facts) {
+    if (facts.entry_kind == EntryKind::Directory) {
         return FileTypeId::Folder;
     }
 
-    const std::string path = lower_ascii(normalize_project_path(project_relative_path));
-    const std::string name = file_name_from_path(path);
-    const std::string extension = extension_from_path(path);
+    const std::string_view path =
+        facts.project_relative_path_lower.empty()
+            ? facts.project_relative_path
+            : facts.project_relative_path_lower;
+    const std::string_view name = file_name_view_from_normalized_path(path);
 
-    if (matches_any(extension, { ".tscn", ".scn" })) {
-        return FileTypeId::GodotScene;
-    }
-    if (matches_any(extension, { ".tres", ".res", ".meshlib" })) {
-        return FileTypeId::GodotResource;
-    }
-    if (matches_any(extension, { ".gd", ".cs", ".sh" })) {
-        return FileTypeId::Script;
-    }
-    if (matches_any(extension, { ".gdshader", ".gdshaderinc", ".shader" })) {
-        return FileTypeId::Shader;
+    switch (facts.extension_id) {
+        case ExtensionId::TSCN:
+        case ExtensionId::SCN:
+            return FileTypeId::GodotScene;
+        case ExtensionId::TRES:
+        case ExtensionId::RES:
+        case ExtensionId::MESHLIB:
+            return FileTypeId::GodotResource;
+        case ExtensionId::GD:
+        case ExtensionId::CS:
+        case ExtensionId::SH:
+            return FileTypeId::Script;
+        case ExtensionId::GDSHADER:
+        case ExtensionId::GDSHADERINC:
+        case ExtensionId::SHADER:
+            return FileTypeId::Shader;
+        case ExtensionId::IMPORT:
+            return FileTypeId::GodotImportMetadata;
+        case ExtensionId::NODE:
+        case ExtensionId::OBJECT:
+        case ExtensionId::RESOURCE:
+            return FileTypeId::GodotEditorMetadata;
+        case ExtensionId::JSON:
+        case ExtensionId::CSV:
+        case ExtensionId::YAML:
+        case ExtensionId::YML:
+        case ExtensionId::TOML:
+        case ExtensionId::XML:
+        case ExtensionId::DAT:
+        case ExtensionId::BYTES:
+            return FileTypeId::Data;
+        case ExtensionId::PNG:
+        case ExtensionId::JPG:
+        case ExtensionId::JPEG:
+        case ExtensionId::WEBP:
+        case ExtensionId::SVG:
+        case ExtensionId::BMP:
+        case ExtensionId::GIF:
+        case ExtensionId::TGA:
+            return FileTypeId::Asset;
+        case ExtensionId::EXR:
+            return FileTypeId::Image;
+        case ExtensionId::WAV:
+        case ExtensionId::MP3:
+        case ExtensionId::OGG:
+        case ExtensionId::OPUS:
+        case ExtensionId::FLAC:
+            return FileTypeId::Audio;
+        case ExtensionId::OTF:
+        case ExtensionId::TTF:
+        case ExtensionId::FNT:
+        case ExtensionId::WOFF:
+        case ExtensionId::WOFF2:
+            return FileTypeId::Font;
+        case ExtensionId::BLEND1:
+        case ExtensionId::BLEND2:
+            return FileTypeId::ModelBackup;
+        case ExtensionId::ASSBIN:
+            return FileTypeId::ModelCache;
+        case ExtensionId::GLB:
+        case ExtensionId::GLTF:
+        case ExtensionId::FBX:
+        case ExtensionId::OBJ:
+        case ExtensionId::DAE:
+        case ExtensionId::BLEND:
+            return FileTypeId::Model;
+        case ExtensionId::ZIP:
+        case ExtensionId::SEVEN_Z:
+        case ExtensionId::RAR:
+        case ExtensionId::TAR:
+        case ExtensionId::GZ:
+            return FileTypeId::Archive;
+        case ExtensionId::DB:
+        case ExtensionId::SQLITE:
+        case ExtensionId::SQLITE3:
+            return FileTypeId::Database;
+        case ExtensionId::DLL:
+        case ExtensionId::SO:
+        case ExtensionId::DYLIB:
+        case ExtensionId::LIB:
+        case ExtensionId::STATICLIB_A:
+        case ExtensionId::OBJECT_O:
+        case ExtensionId::PDB:
+        case ExtensionId::EXP:
+            return FileTypeId::BuildArtifact;
+        case ExtensionId::TXT:
+        case ExtensionId::MD:
+        case ExtensionId::RST:
+        case ExtensionId::ADOC:
+            return FileTypeId::Documentation;
+        case ExtensionId::ASE:
+            return FileTypeId::ColorPalette;
+        case ExtensionId::SRC_C:
+        case ExtensionId::SRC_H:
+        case ExtensionId::CPP:
+        case ExtensionId::HPP:
+        case ExtensionId::PY:
+        case ExtensionId::JS:
+        case ExtensionId::TS:
+        case ExtensionId::RS:
+        case ExtensionId::GO:
+        case ExtensionId::JAVA:
+            return FileTypeId::SourceCode;
+        case ExtensionId::XCF:
+        case ExtensionId::PSD:
+        case ExtensionId::ASEPRITE:
+        case ExtensionId::KRA:
+            return FileTypeId::SourceArt;
+        case ExtensionId::SPP:
+            return FileTypeId::MaterialSource;
+        case ExtensionId::BIN:
+            return FileTypeId::BinaryData;
+        default:
+            break;
     }
 
-    if (starts_with(path, ".godot/imported/") && extension == ".md5") {
+    if (starts_with(path, ".godot/imported/") && facts.extension_id == ExtensionId::MD5) {
         return FileTypeId::GodotImportHash;
     }
 
-    if (starts_with(path, ".godot/shader_cache/") && extension == ".cache") {
+    if (starts_with(path, ".godot/shader_cache/") && facts.extension_id == ExtensionId::CACHE) {
         return FileTypeId::GodotShaderCache;
     }
 
-    if (extension == ".import") {
-        return FileTypeId::GodotImportMetadata;
-    }
-
-    if (matches_any(extension, { ".node", ".object", ".resource" })) {
-        return FileTypeId::GodotEditorMetadata;
-    }
-
-    if (matches_any(extension, { ".cfg", ".ini", ".conf", ".config", ".godot", ".uid", ".gdextension" }) ||
-        matches_any(name, { "plugin.cfg", "project.godot", ".editorconfig", ".gitignore", ".gitattributes" })) {
+    if (facts.extension_id == ExtensionId::CFG ||
+        facts.extension_id == ExtensionId::INI_FILE ||
+        facts.extension_id == ExtensionId::CONF_FILE ||
+        facts.extension_id == ExtensionId::CONFIG_FILE ||
+        facts.extension_id == ExtensionId::GODOT ||
+        facts.extension_id == ExtensionId::UID ||
+        facts.extension_id == ExtensionId::GD_EXTENSION_FILE ||
+        name == "plugin.cfg" ||
+        name == "project.godot" ||
+        name == ".editorconfig" ||
+        name == ".gitignore" ||
+        name == ".gitattributes") {
         return FileTypeId::Config;
-    }
-    if (matches_any(extension, { ".json", ".csv", ".yaml", ".yml", ".toml", ".xml", ".dat", ".bytes" })) {
-        return FileTypeId::Data;
-    }
-    if (matches_any(extension, { ".png", ".jpg", ".jpeg", ".webp", ".svg", ".bmp", ".gif", ".tga" })) {
-        return FileTypeId::Asset;
-    }
-
-    if (extension == ".exr") {
-        return FileTypeId::Image;
-    }
-
-    if (matches_any(extension, { ".wav", ".mp3", ".ogg", ".opus", ".flac" })) {
-        return FileTypeId::Audio;
-    }
-    if (matches_any(extension, { ".ttf", ".otf", ".fnt", ".woff", ".woff2" })) {
-        return FileTypeId::Font;
-    }
-
-    if (extension == ".blend1" || extension == ".blend2") {
-        return FileTypeId::ModelBackup;
-    }
-
-    if (extension == ".assbin") {
-        return FileTypeId::ModelCache;
-    }
-
-    if (matches_any(extension, { ".glb", ".gltf", ".fbx", ".obj", ".dae", ".blend" })) {
-        return FileTypeId::Model;
-    }
-    if (matches_any(extension, { ".zip", ".7z", ".rar", ".tar", ".gz" })) {
-        return FileTypeId::Archive;
-    }
-    if (matches_any(extension, { ".db", ".sqlite", ".sqlite3" })) {
-        return FileTypeId::Database;
-    }
-    if (matches_any(extension, { ".dll", ".so", ".dylib", ".lib", ".a", ".obj", ".o", ".pdb", ".exp" })) {
-        return FileTypeId::BuildArtifact;
-    }
-    if (matches_any(extension, { ".txt", ".md", ".rst", ".adoc" })) {
-        return FileTypeId::Documentation;
-    }
-
-    if (extension == ".ase") {
-        return FileTypeId::ColorPalette;
-    }
-
-    if (matches_any(extension, { ".c", ".h", ".cpp", ".hpp", ".py", ".js", ".ts", ".rs", ".go", ".java" })) {
-        return FileTypeId::SourceCode;
-    }
-    if (matches_any(extension, { ".xcf", ".psd", ".aseprite", ".kra" })) {
-        return FileTypeId::SourceArt;
-    }
-
-    if (extension == ".spp") {
-        return FileTypeId::MaterialSource;
-    }
-
-    if (extension == ".bin") {
-        return FileTypeId::BinaryData;
     }
 
     if (ends_with_any(name, { ".x86_64" })) {
@@ -324,65 +535,117 @@ FileTypeId classify_entry(std::string_view project_relative_path, EntryKind kind
     return FileTypeId::Unknown;
 }
 
-GodotTypeHint detect_godot_type_hint(std::string_view project_relative_path, FileTypeId file_type) {
-    const std::string path = lower_ascii(normalize_project_path(project_relative_path));
-    const std::string name = file_name_from_path(path);
-    const std::string extension = extension_from_path(path);
-
+GodotTypeHint detect_godot_type_hint_from_facts(const EntryFacts &facts, FileTypeId file_type) {
     if (file_type == FileTypeId::Folder) {
         return GodotTypeHint::NotGodotTyped;
     }
 
-    if (matches_any(extension, { ".tscn", ".scn", ".glb", ".gltf", ".fbx", ".dae", ".blend" })) {
-        return GodotTypeHint::PackedScene;
+    const std::string_view path =
+        facts.project_relative_path_lower.empty()
+            ? facts.project_relative_path
+            : facts.project_relative_path_lower;
+    const std::string_view name = file_name_view_from_normalized_path(path);
+
+    switch (facts.extension_id) {
+        case ExtensionId::TSCN:
+        case ExtensionId::SCN:
+        case ExtensionId::GLB:
+        case ExtensionId::GLTF:
+        case ExtensionId::FBX:
+        case ExtensionId::DAE:
+        case ExtensionId::BLEND:
+            return GodotTypeHint::PackedScene;
+        case ExtensionId::TRES:
+        case ExtensionId::RES:
+            return GodotTypeHint::Resource;
+        case ExtensionId::MESHLIB:
+            return GodotTypeHint::MeshLibrary;
+        case ExtensionId::GD:
+            return GodotTypeHint::GDScript;
+        case ExtensionId::CS:
+            return GodotTypeHint::CSharpScript;
+        case ExtensionId::GDSHADER:
+        case ExtensionId::SHADER:
+            return GodotTypeHint::Shader;
+        case ExtensionId::GDSHADERINC:
+            return GodotTypeHint::ShaderInclude;
+        case ExtensionId::PNG:
+        case ExtensionId::JPG:
+        case ExtensionId::JPEG:
+        case ExtensionId::WEBP:
+        case ExtensionId::SVG:
+        case ExtensionId::BMP:
+        case ExtensionId::GIF:
+        case ExtensionId::TGA:
+            return GodotTypeHint::Texture2D;
+        case ExtensionId::WAV:
+            return GodotTypeHint::AudioStreamWAV;
+        case ExtensionId::MP3:
+            return GodotTypeHint::AudioStreamMP3;
+        case ExtensionId::OGG:
+        case ExtensionId::OPUS:
+            return GodotTypeHint::AudioStreamOggVorbis;
+        case ExtensionId::OTF:
+        case ExtensionId::TTF:
+        case ExtensionId::FNT:
+        case ExtensionId::WOFF:
+        case ExtensionId::WOFF2:
+            return GodotTypeHint::FontFile;
+        case ExtensionId::GD_EXTENSION_FILE:
+            return GodotTypeHint::GDExtension;
+        case ExtensionId::UID:
+            return GodotTypeHint::ResourceUID;
+        case ExtensionId::CFG:
+        case ExtensionId::INI_FILE:
+        case ExtensionId::CONF_FILE:
+        case ExtensionId::CONFIG_FILE:
+        case ExtensionId::REMAP:
+            return GodotTypeHint::ConfigFile;
+        default:
+            break;
     }
-    if (matches_any(extension, { ".tres", ".res" })) {
-        return GodotTypeHint::Resource;
-    }
-    if (extension == ".meshlib") {
-        return GodotTypeHint::MeshLibrary;
-    }
-    if (extension == ".gd") {
-        return GodotTypeHint::GDScript;
-    }
-    if (extension == ".cs") {
-        return GodotTypeHint::CSharpScript;
-    }
-    if (extension == ".gdshader" || extension == ".shader") {
-        return GodotTypeHint::Shader;
-    }
-    if (extension == ".gdshaderinc") {
-        return GodotTypeHint::ShaderInclude;
-    }
-    if (matches_any(extension, { ".png", ".jpg", ".jpeg", ".webp", ".svg", ".bmp", ".gif", ".tga" })) {
-        return GodotTypeHint::Texture2D;
-    }
-    if (extension == ".wav") {
-        return GodotTypeHint::AudioStreamWAV;
-    }
-    if (extension == ".mp3") {
-        return GodotTypeHint::AudioStreamMP3;
-    }
-    if (extension == ".ogg" || extension == ".opus") {
-        return GodotTypeHint::AudioStreamOggVorbis;
-    }
-    if (matches_any(extension, { ".ttf", ".otf", ".fnt", ".woff", ".woff2" })) {
-        return GodotTypeHint::FontFile;
-    }
-    if (extension == ".gdextension") {
-        return GodotTypeHint::GDExtension;
-    }
-    if (extension == ".uid") {
-        return GodotTypeHint::ResourceUID;
-    }
-    if (matches_any(extension, { ".cfg", ".ini", ".conf", ".config", ".remap" }) || name == "plugin.cfg") {
+
+    if (name == "plugin.cfg") {
         return GodotTypeHint::ConfigFile;
     }
+
     if (name == "project.godot") {
         return GodotTypeHint::ProjectSettings;
     }
 
     return GodotTypeHint::NotGodotTyped;
+}
+
+FileTypeId classify_entry(std::string_view project_relative_path, EntryKind kind) {
+    const std::string normalized = normalize_project_path(project_relative_path);
+    const std::string lowered = lower_ascii(normalized);
+    const std::string_view name = file_name_view_from_normalized_path(lowered);
+    const std::string extension = extension_from_name_lower(name);
+
+    EntryFacts facts;
+    facts.project_relative_path = normalized;
+    facts.project_relative_path_lower = lowered;
+    facts.file_name = name;
+    facts.extension = extension;
+    facts.entry_kind = kind;
+    facts.extension_id = extension_id_from_extension(extension);
+    return classify_entry_from_facts(facts);
+}
+
+GodotTypeHint detect_godot_type_hint(std::string_view project_relative_path, FileTypeId file_type) {
+    const std::string normalized = normalize_project_path(project_relative_path);
+    const std::string lowered = lower_ascii(normalized);
+    const std::string_view name = file_name_view_from_normalized_path(lowered);
+    const std::string extension = extension_from_name_lower(name);
+
+    EntryFacts facts;
+    facts.project_relative_path = normalized;
+    facts.project_relative_path_lower = lowered;
+    facts.file_name = name;
+    facts.extension = extension;
+    facts.entry_kind = EntryKind::File;
+    facts.extension_id = extension_id_from_extension(extension);
+    return detect_godot_type_hint_from_facts(facts, file_type);
 }
 
 TypeHintSource type_hint_source_for(GodotTypeHint hint) {
@@ -485,6 +748,49 @@ bool is_builtin_resource_type_hint(std::string_view type_name) {
 
 const char *to_string(EntryKind value) {
     return value == EntryKind::Directory ? "directory" : "file";
+}
+
+const char *to_string(ExtensionId value) {
+    switch (value) {
+        case ExtensionId::TSCN: return ".tscn";
+        case ExtensionId::SCN: return ".scn";
+        case ExtensionId::TRES: return ".tres";
+        case ExtensionId::RES: return ".res";
+        case ExtensionId::GD: return ".gd";
+        case ExtensionId::CS: return ".cs";
+        case ExtensionId::SH: return ".sh";
+        case ExtensionId::GDSHADER: return ".gdshader";
+        case ExtensionId::GDSHADERINC: return ".gdshaderinc";
+        case ExtensionId::SHADER: return ".shader";
+        case ExtensionId::IMPORT: return ".import";
+        case ExtensionId::UID: return ".uid";
+        case ExtensionId::PNG: return ".png";
+        case ExtensionId::JPG: return ".jpg";
+        case ExtensionId::JPEG: return ".jpeg";
+        case ExtensionId::WEBP: return ".webp";
+        case ExtensionId::SVG: return ".svg";
+        case ExtensionId::WAV: return ".wav";
+        case ExtensionId::OGG: return ".ogg";
+        case ExtensionId::MP3: return ".mp3";
+        case ExtensionId::GLB: return ".glb";
+        case ExtensionId::GLTF: return ".gltf";
+        case ExtensionId::FBX: return ".fbx";
+        case ExtensionId::DAE: return ".dae";
+        case ExtensionId::BLEND: return ".blend";
+        case ExtensionId::MESHLIB: return ".meshlib";
+        case ExtensionId::GODOT: return ".godot";
+        case ExtensionId::CFG: return ".cfg";
+        case ExtensionId::JSON: return ".json";
+        case ExtensionId::CSV: return ".csv";
+        case ExtensionId::MD: return ".md";
+        case ExtensionId::DLL: return ".dll";
+        case ExtensionId::SO: return ".so";
+        case ExtensionId::DYLIB: return ".dylib";
+        case ExtensionId::BIN: return ".bin";
+        case ExtensionId::Unknown:
+        default:
+            return "";
+    }
 }
 
 const char *to_string(FileTypeId value) {

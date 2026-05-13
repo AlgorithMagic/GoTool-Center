@@ -13,6 +13,8 @@
 #include <godot_cpp/variant/char_string.hpp>
 #include <godot_cpp/variant/variant.hpp>
 
+#include <algorithm>
+#include <chrono>
 #include <ctime>
 #include <cctype>
 #include <exception>
@@ -212,6 +214,23 @@ gotool::project_scanner::CustomClassQuery custom_class_query_from_dictionary(con
     query.base_type = to_utf8(String(filter.get("base_type", "")));
     query.search = to_utf8(String(filter.get("search", "")));
     return query;
+}
+
+std::vector<std::string> normalized_dirty_paths_from_array(const Array &paths) {
+    std::vector<std::string> normalized;
+    normalized.reserve(static_cast<size_t>(paths.size()));
+
+    for (int64_t i = 0; i < paths.size(); ++i) {
+        const String raw = String(paths[i]);
+        const std::string path = gotool::project_scanner::normalize_project_path(to_utf8(raw));
+        if (!path.empty()) {
+            normalized.push_back(path);
+        }
+    }
+
+    std::sort(normalized.begin(), normalized.end());
+    normalized.erase(std::unique(normalized.begin(), normalized.end()), normalized.end());
+    return normalized;
 }
 
 Dictionary file_row_to_dictionary(const gotool::project_scanner::FileRow &row) {
@@ -485,6 +504,11 @@ void GodotProjectContext::_bind_methods() {
     ClassDB::bind_method(
         D_METHOD("scan_current_project_fast", "options"),
         &GodotProjectContext::scan_current_project_fast
+    );
+
+    ClassDB::bind_method(
+        D_METHOD("benchmark_native_scan", "options"),
+        &GodotProjectContext::benchmark_native_scan
     );
 
     ClassDB::bind_method(
@@ -968,6 +992,49 @@ Dictionary GodotProjectContext::start_scan(const Dictionary &options) {
         const bool force_rescan = static_cast<bool>(options.get("force_rescan", false));
         const bool include_custom_classes = static_cast<bool>(options.get("include_custom_classes", true));
         const bool include_deleted = static_cast<bool>(options.get("include_deleted", false));
+        const bool load_existing_snapshot = static_cast<bool>(options.get("load_existing_snapshot", true));
+        const bool enable_parallel_traversal = static_cast<bool>(options.get("enable_parallel_traversal", false));
+        const int64_t max_parallel_workers = static_cast<int64_t>(options.get("max_parallel_workers", 0));
+        const bool prefer_watcher_dirty_paths =
+            static_cast<bool>(options.get("prefer_watcher_dirty_paths", true));
+
+        std::vector<std::string> dirty_paths;
+        if (options.has("dirty_paths")) {
+            dirty_paths = normalized_dirty_paths_from_array(Array(options.get("dirty_paths", Array())));
+        }
+
+        bool watcher_requires_full_rescan = false;
+        if (prefer_watcher_dirty_paths) {
+            std::lock_guard<std::mutex> watcher_lock(watcher_mutex_);
+            if (file_watcher_ != nullptr) {
+                const gotool::project_scanner::FileWatcherStatus watcher_status = file_watcher_->get_status();
+                watcher_requires_full_rescan = watcher_status.requires_full_rescan;
+
+                if (!watcher_requires_full_rescan && watcher_status.running && watcher_status.supported &&
+                    dirty_paths.empty()) {
+                    const std::vector<gotool::project_scanner::FileWatcherEvent> events =
+                        file_watcher_->drain_events();
+                    dirty_paths.reserve(events.size());
+                    for (const gotool::project_scanner::FileWatcherEvent &event : events) {
+                        const std::string path =
+                            gotool::project_scanner::normalize_project_path(event.project_relative_path);
+                        if (!path.empty()) {
+                            dirty_paths.push_back(path);
+                        }
+                    }
+
+                    std::sort(dirty_paths.begin(), dirty_paths.end());
+                    dirty_paths.erase(std::unique(dirty_paths.begin(), dirty_paths.end()), dirty_paths.end());
+                }
+            }
+        }
+
+        const bool use_dirty_path_filter =
+            prefer_watcher_dirty_paths &&
+            !watcher_requires_full_rescan &&
+            !dirty_paths.empty() &&
+            !force_rescan;
+
         const std::filesystem::path project_root = get_current_project_root_path();
 
         {
@@ -1024,7 +1091,12 @@ Dictionary GodotProjectContext::start_scan(const Dictionary &options) {
                  include_hidden,
                  force_rescan,
                  include_custom_classes,
-                 include_deleted]() {
+                 include_deleted,
+                 load_existing_snapshot,
+                 enable_parallel_traversal,
+                 max_parallel_workers,
+                 use_dirty_path_filter,
+                 dirty_paths]() {
                 {
                     std::lock_guard<std::mutex> lock(scan_mutex_);
                     if (active_scan_state_ == state) {
@@ -1043,9 +1115,14 @@ Dictionary GodotProjectContext::start_scan(const Dictionary &options) {
                     scan_options.persist_to_database = true;
                     scan_options.collect_custom_classes = include_custom_classes;
                     scan_options.include_deleted = include_deleted;
+                    scan_options.load_existing_snapshot = load_existing_snapshot;
+                    scan_options.use_dirty_path_filter = use_dirty_path_filter;
+                    scan_options.enable_parallel_traversal = enable_parallel_traversal;
+                    scan_options.max_parallel_workers = max_parallel_workers;
                     scan_options.scan_run_id = state->scan_id;
                     scan_options.scan_generation = state->scan_generation;
                     scan_options.started_at_unix = state->started_at_unix;
+                    scan_options.dirty_paths = dirty_paths;
 
                     gotool::project_scanner::NativeScanResult native_result;
                     {
@@ -1221,8 +1298,21 @@ Dictionary GodotProjectContext::scan_project_inventory_fast(const Dictionary &op
         const std::filesystem::path project_root = get_current_project_root_path();
         const bool include_hidden = static_cast<bool>(options.get("include_hidden", true));
         const bool include_custom_classes = static_cast<bool>(options.get("include_custom_classes", true));
+        const bool materialize_files = static_cast<bool>(options.get("materialize_files", true));
+        const bool materialize_custom_classes =
+            static_cast<bool>(options.get("materialize_custom_classes", include_custom_classes));
+        const bool include_autoloads = static_cast<bool>(options.get("include_autoloads", true));
         const bool force_rescan = static_cast<bool>(options.get("force_rescan", false));
+        const bool load_existing_snapshot = static_cast<bool>(options.get("load_existing_snapshot", true));
+        const bool use_dirty_path_filter = static_cast<bool>(options.get("use_dirty_path_filter", false));
+        const bool enable_parallel_traversal = static_cast<bool>(options.get("enable_parallel_traversal", false));
+        const int64_t max_parallel_workers = static_cast<int64_t>(options.get("max_parallel_workers", 0));
         const int64_t max_results = static_cast<int64_t>(options.get("max_results", 0));
+
+        std::vector<std::string> dirty_paths;
+        if (options.has("dirty_paths")) {
+            dirty_paths = normalized_dirty_paths_from_array(Array(options.get("dirty_paths", Array())));
+        }
 
         int64_t project_id = 0;
         if (database_ != nullptr) {
@@ -1239,7 +1329,12 @@ Dictionary GodotProjectContext::scan_project_inventory_fast(const Dictionary &op
         scan_options.force_rescan = force_rescan;
         scan_options.persist_to_database = false;
         scan_options.collect_custom_classes = include_custom_classes;
+        scan_options.load_existing_snapshot = load_existing_snapshot;
+        scan_options.use_dirty_path_filter = use_dirty_path_filter && !dirty_paths.empty() && !force_rescan;
+        scan_options.enable_parallel_traversal = enable_parallel_traversal;
+        scan_options.max_parallel_workers = max_parallel_workers;
         scan_options.result_limit = max_results;
+        scan_options.dirty_paths = dirty_paths;
 
         gotool::project_scanner::NativeScanResult native_result;
         bool ran_with_database = false;
@@ -1257,40 +1352,55 @@ Dictionary GodotProjectContext::scan_project_inventory_fast(const Dictionary &op
             native_result = pipeline.run_detailed(scan_options);
         }
 
-        Array files;
-        for (const gotool::project_scanner::EntryRecord &record : native_result.records) {
-            const std::string project_path =
-                native_result.arena.string_at(record.path_offset, record.path_length);
-            const std::string file_name =
-                native_result.arena.string_at(record.name_offset, record.name_length);
-            const std::filesystem::path absolute_path =
-                (project_root / std::filesystem::u8path(project_path)).lexically_normal();
+        const auto materialization_start = std::chrono::steady_clock::now();
+        int64_t materialized_rows = 0;
 
-            Dictionary row;
-            row["path"] = from_utf8("res://" + project_path);
-            row["name"] = from_utf8(file_name);
-            row["type"] = record.entry_kind == gotool::project_scanner::EntryKind::Directory ? "folder" : "file";
-            row["project_relative_path"] = from_utf8(project_path);
-            row["absolute_path"] = from_utf8(to_utf8_from_u8(absolute_path.generic_u8string()));
-            row["file_name"] = from_utf8(file_name);
-            row["extension"] = from_utf8(gotool::project_scanner::extension_from_path(project_path));
-            row["file_type"] = from_utf8(gotool::project_scanner::to_string(record.file_type_id));
-            row["godot_type"] = from_utf8(gotool::project_scanner::to_string(record.godot_type_hint));
-            row["size_bytes"] = record.size_bytes;
-            row["modified_time_unix"] = record.modified_time_ns / 1'000'000'000LL;
-            row["modified_time_ns"] = record.modified_time_ns;
-            row["is_directory"] = record.entry_kind == gotool::project_scanner::EntryKind::Directory;
-            row["is_hidden"] = record.is_hidden();
-            row["dirty_state"] = from_utf8(gotool::project_scanner::to_string(record.dirty_state));
-            row["dirty_reason"] = from_utf8(gotool::project_scanner::to_string(record.dirty_reason));
-            files.append(row);
+        Array files;
+        if (materialize_files) {
+            for (const gotool::project_scanner::EntryRecord &record : native_result.records) {
+                const std::string project_path =
+                    native_result.arena.string_at(record.path_offset, record.path_length);
+                const std::string file_name =
+                    native_result.arena.string_at(record.name_offset, record.name_length);
+                const std::string extension =
+                    native_result.arena.string_at(record.extension_offset, record.extension_length);
+                const std::filesystem::path absolute_path =
+                    (project_root / std::filesystem::u8path(project_path)).lexically_normal();
+
+                Dictionary row;
+                row["path"] = from_utf8("res://" + project_path);
+                row["name"] = from_utf8(file_name);
+                row["type"] =
+                    record.entry_kind == gotool::project_scanner::EntryKind::Directory ? "folder" : "file";
+                row["project_relative_path"] = from_utf8(project_path);
+                row["absolute_path"] = from_utf8(to_utf8_from_u8(absolute_path.generic_u8string()));
+                row["file_name"] = from_utf8(file_name);
+                row["extension"] = from_utf8(extension);
+                row["file_type"] = from_utf8(gotool::project_scanner::to_string(record.file_type_id));
+                row["godot_type"] = from_utf8(gotool::project_scanner::to_string(record.godot_type_hint));
+                row["size_bytes"] = record.size_bytes;
+                row["modified_time_unix"] = record.modified_time_ns / 1'000'000'000LL;
+                row["modified_time_ns"] = record.modified_time_ns;
+                row["is_directory"] = record.entry_kind == gotool::project_scanner::EntryKind::Directory;
+                row["is_hidden"] = record.is_hidden();
+                row["dirty_state"] = from_utf8(gotool::project_scanner::to_string(record.dirty_state));
+                row["dirty_reason"] = from_utf8(gotool::project_scanner::to_string(record.dirty_reason));
+                files.append(row);
+                ++materialized_rows;
+            }
         }
 
         Array custom_classes;
+        int64_t discovered_custom_class_count = 0;
         if (include_custom_classes) {
             for (const gotool::project_scanner::ParsedScriptRecord &parsed : native_result.parsed_scripts) {
                 if (parsed.parse_result.status != gotool::project_scanner::ParseStatus::ParsedClass ||
                     parsed.parse_result.class_name.empty()) {
+                    continue;
+                }
+
+                ++discovered_custom_class_count;
+                if (!materialize_custom_classes) {
                     continue;
                 }
 
@@ -1309,25 +1419,40 @@ Dictionary GodotProjectContext::scan_project_inventory_fast(const Dictionary &op
                 row["parse_error"] = from_utf8(parsed.parse_result.parse_error);
                 row["last_parsed_generation"] = native_result.summary.scan_generation;
                 custom_classes.append(row);
+                ++materialized_rows;
             }
         }
 
         Array autoloads;
-        const std::vector<ParsedAutoload> parsed_autoloads = parse_project_autoloads(project_root);
-        for (const ParsedAutoload &autoload : parsed_autoloads) {
-            Dictionary row;
-            row["autoload_name"] = from_utf8(autoload.autoload_name);
-            row["target_path"] = from_utf8(autoload.target_path);
-            row["target_project_relative_path"] =
-                from_utf8(gotool::project_scanner::normalize_project_path(autoload.target_path));
-            row["is_singleton"] = autoload.is_singleton;
-            autoloads.append(row);
+        int64_t autoload_count = 0;
+        if (include_autoloads) {
+            const std::vector<ParsedAutoload> parsed_autoloads = parse_project_autoloads(project_root);
+            for (const ParsedAutoload &autoload : parsed_autoloads) {
+                Dictionary row;
+                row["autoload_name"] = from_utf8(autoload.autoload_name);
+                row["target_path"] = from_utf8(autoload.target_path);
+                row["target_project_relative_path"] =
+                    from_utf8(gotool::project_scanner::normalize_project_path(autoload.target_path));
+                row["is_singleton"] = autoload.is_singleton;
+                autoloads.append(row);
+                ++autoload_count;
+                ++materialized_rows;
+            }
         }
+
+        native_result.metrics.godot_materialization_ms =
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - materialization_start
+            ).count();
+        native_result.metrics.ui_rows_materialized = materialized_rows;
 
         Dictionary inventory;
         inventory["files"] = files;
         inventory["autoloads"] = autoloads;
         inventory["custom_classes"] = custom_classes;
+        inventory["entry_record_count"] = static_cast<int64_t>(native_result.records.size());
+        inventory["custom_class_count"] = discovered_custom_class_count;
+        inventory["autoload_count"] = autoload_count;
         inventory["metrics"] = metrics_to_dictionary(native_result.metrics);
         inventory["scan_summary"] = scan_summary_to_dictionary(native_result.summary);
         last_error_ = "";
@@ -1340,6 +1465,80 @@ Dictionary GodotProjectContext::scan_project_inventory_fast(const Dictionary &op
 
 Dictionary GodotProjectContext::scan_current_project_fast(const Dictionary &options) {
     return scan_project_inventory_fast(options);
+}
+
+Dictionary GodotProjectContext::benchmark_native_scan(const Dictionary &options) {
+    last_error_ = "";
+
+    try {
+        const std::filesystem::path project_root = get_current_project_root_path();
+        const bool include_hidden = static_cast<bool>(options.get("include_hidden", true));
+        const bool include_custom_classes = static_cast<bool>(options.get("include_custom_classes", true));
+        const bool force_rescan = static_cast<bool>(options.get("force_rescan", false));
+        const bool load_existing_snapshot = static_cast<bool>(options.get("load_existing_snapshot", false));
+        const bool include_database_snapshot =
+            static_cast<bool>(options.get("include_database_snapshot", false));
+        const bool use_dirty_path_filter = static_cast<bool>(options.get("use_dirty_path_filter", false));
+        const bool enable_parallel_traversal = static_cast<bool>(options.get("enable_parallel_traversal", false));
+        const int64_t max_parallel_workers = static_cast<int64_t>(options.get("max_parallel_workers", 0));
+
+        std::vector<std::string> dirty_paths;
+        if (options.has("dirty_paths")) {
+            dirty_paths = normalized_dirty_paths_from_array(Array(options.get("dirty_paths", Array())));
+        }
+
+        int64_t project_id = 0;
+        if (include_database_snapshot && database_ != nullptr) {
+            const int64_t registered_project_id = register_current_project();
+            if (registered_project_id > 0) {
+                project_id = registered_project_id;
+            }
+        }
+
+        gotool::project_scanner::ScanOptions scan_options;
+        scan_options.project_id = project_id;
+        scan_options.project_root = project_root;
+        scan_options.include_hidden = include_hidden;
+        scan_options.force_rescan = force_rescan;
+        scan_options.persist_to_database = false;
+        scan_options.collect_custom_classes = include_custom_classes;
+        scan_options.load_existing_snapshot = load_existing_snapshot && include_database_snapshot;
+        scan_options.use_dirty_path_filter = use_dirty_path_filter && !dirty_paths.empty() && !force_rescan;
+        scan_options.enable_parallel_traversal = enable_parallel_traversal;
+        scan_options.max_parallel_workers = max_parallel_workers;
+        scan_options.dirty_paths = dirty_paths;
+        scan_options.result_limit = 0;
+
+        gotool::project_scanner::NativeScanResult native_result;
+        bool ran_with_database = false;
+
+        if (include_database_snapshot && database_ != nullptr && project_id > 0) {
+            std::lock_guard<std::mutex> db_lock(database_mutex_);
+            if (database_ != nullptr) {
+                gotool::project_scanner::NativeScanPipeline pipeline(*database_);
+                native_result = pipeline.run_detailed(scan_options);
+                ran_with_database = true;
+            }
+        }
+
+        if (!ran_with_database) {
+            gotool::project_scanner::NativeScanPipeline pipeline;
+            native_result = pipeline.run_detailed(scan_options);
+        }
+
+        Dictionary result;
+        result["scan_summary"] = scan_summary_to_dictionary(native_result.summary);
+        result["metrics"] = metrics_to_dictionary(native_result.metrics);
+        result["entry_record_count"] = static_cast<int64_t>(native_result.records.size());
+        result["parsed_script_count"] = static_cast<int64_t>(native_result.parsed_scripts.size());
+        result["files_seen"] = native_result.metrics.files_seen;
+        result["dirs_seen"] = native_result.metrics.dirs_seen;
+        result["materialized"] = false;
+        return result;
+    } catch (const std::exception &error) {
+        last_error_ = error.what();
+        return Dictionary();
+    }
 }
 
 bool GodotProjectContext::start_watcher() {

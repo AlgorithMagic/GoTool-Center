@@ -17,7 +17,6 @@ namespace gotool::project_scanner {
 struct ParsedScriptRecord {
     size_t record_index = 0;
     std::string project_relative_path;
-    std::string extension;
     ScriptParseResult parse_result;
 };
 

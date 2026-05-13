@@ -7,11 +7,13 @@
 
 #include "doctest.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <set>
 #include <string>
 
 namespace {
@@ -106,6 +108,15 @@ TEST_CASE("skip_policy_excludes_gotool_addon_and_cache_paths") {
     CHECK_FALSE(policy.should_skip("scripts/player.gd"));
 }
 
+TEST_CASE("skip_policy_supports_external_and_normalized_path_modes") {
+    gotool::project_scanner::SkipPolicy policy;
+
+    CHECK(policy.should_skip_external("res://addons\\GoToolCenter\\bin\\libgotool_center.dll"));
+    CHECK(policy.should_skip_normalized(".godot/imported/scene.md5"));
+    CHECK_FALSE(policy.should_skip_normalized("res://addons/GoToolCenter"));
+    CHECK_FALSE(policy.should_skip_external("res://scripts/player.gd"));
+}
+
 TEST_CASE("extension_extraction_and_classification_are_cheap") {
     CHECK(gotool::project_scanner::extension_from_path("Scripts/Player.GD") == ".gd");
     CHECK(gotool::project_scanner::extension_from_path("README") == "");
@@ -131,6 +142,48 @@ TEST_CASE("extension_classification_handles_metadata_and_source_artifacts") {
     CHECK(gotool::project_scanner::detect_godot_type_hint("tests/fixtures/type_probe_extensions/meta.import", FileTypeId::GodotImportMetadata) == GodotTypeHint::NotGodotTyped);
     CHECK(gotool::project_scanner::detect_godot_type_hint("tests/fixtures/type_probe_extensions/editor.node", FileTypeId::GodotEditorMetadata) == GodotTypeHint::NotGodotTyped);
     CHECK(gotool::project_scanner::detect_godot_type_hint("tests/fixtures/type_probe_extensions/image.exr", FileTypeId::Image) == GodotTypeHint::NotGodotTyped);
+}
+
+TEST_CASE("extension_dispatch_from_facts_matches_wrapper_classification") {
+    struct Case {
+        const char *path;
+        EntryKind kind;
+        FileTypeId expected_type;
+        GodotTypeHint expected_hint;
+    };
+
+    const std::vector<Case> cases = {
+        { "levels/main.tscn", EntryKind::File, FileTypeId::GodotScene, GodotTypeHint::PackedScene },
+        { "scripts/player.gd", EntryKind::File, FileTypeId::Script, GodotTypeHint::GDScript },
+        { "audio/theme.ogg", EntryKind::File, FileTypeId::Audio, GodotTypeHint::AudioStreamOggVorbis },
+        { "textures/icon.png", EntryKind::File, FileTypeId::Asset, GodotTypeHint::Texture2D },
+        { ".godot/imported/cache.md5", EntryKind::File, FileTypeId::GodotImportHash, GodotTypeHint::NotGodotTyped },
+        { "plugins", EntryKind::Directory, FileTypeId::Folder, GodotTypeHint::NotGodotTyped },
+    };
+
+    for (const Case &item : cases) {
+        const std::string normalized = gotool::project_scanner::normalize_project_path(item.path);
+        const std::string lowered = gotool::project_scanner::lower_ascii(normalized);
+        const std::string file_name = gotool::project_scanner::file_name_from_path(normalized);
+        const std::string extension = gotool::project_scanner::extension_from_path(normalized);
+
+        gotool::project_scanner::EntryFacts facts;
+        facts.project_relative_path = normalized;
+        facts.project_relative_path_lower = lowered;
+        facts.file_name = file_name;
+        facts.extension = extension;
+        facts.entry_kind = item.kind;
+        facts.extension_id = gotool::project_scanner::extension_id_from_extension(extension);
+
+        const FileTypeId fact_type = gotool::project_scanner::classify_entry_from_facts(facts);
+        CHECK(fact_type == item.expected_type);
+        CHECK(gotool::project_scanner::classify_entry(item.path, item.kind) == item.expected_type);
+
+        const GodotTypeHint fact_hint =
+            gotool::project_scanner::detect_godot_type_hint_from_facts(facts, fact_type);
+        CHECK(fact_hint == item.expected_hint);
+        CHECK(gotool::project_scanner::detect_godot_type_hint(item.path, fact_type) == item.expected_hint);
+    }
 }
 
 TEST_CASE("dirty_detector_reports_clean_and_metadata_changes") {
@@ -301,6 +354,18 @@ TEST_CASE("path_arena_reserve_is_stable_for_hot_path_appends") {
     CHECK(arena.capacity() >= before_capacity);
     CHECK(arena.view(first, 7) == "scripts");
     CHECK(arena.view(second, 10) == "/player.gd");
+}
+
+TEST_CASE("platform_file_identity_serialization_is_stable") {
+    gotool::project_scanner::EntryRecord record;
+    record.platform_file_id_high = 0x12;
+    record.platform_file_id_low = 0x34;
+    record.flags |= 1u << 1u;
+
+    CHECK(gotool::project_scanner::platform_file_id_to_string(record) == "12:34");
+
+    record.clear_platform_file_id();
+    CHECK(gotool::project_scanner::platform_file_id_to_string(record).empty());
 }
 
 TEST_CASE("scanner_schema_v3_supports_batched_writes_tombstones_and_paging") {
@@ -476,4 +541,141 @@ TEST_CASE("native_scan_pipeline_no_db_mode_returns_records_without_db_writes") {
     CHECK_FALSE(result.records.empty());
     CHECK(query_int64(database, "SELECT COUNT(*) FROM project_scan_runs WHERE project_id = 1;") == 0);
     CHECK(query_int64(database, "SELECT COUNT(*) FROM project_files WHERE project_id = 1;") == 0);
+}
+
+TEST_CASE("native_scan_pipeline_can_skip_existing_snapshot_load_for_benchmark_paths") {
+    TemporaryRoot root(make_temp_root("pipeline_skip_snapshot"));
+    write_text(root.path / "project.godot", "[application]\n");
+    write_text(root.path / "scripts" / "player.gd", "class_name Player\nextends Node\n");
+
+    Database database((root.path / "scanner.sqlite3").string());
+    gotool::database::create_schema(database, 0);
+    database.exec(
+        "INSERT INTO projects ("
+        "id, project_uid, display_name, root_absolute_path, root_canonical_path, "
+        "project_file_absolute_path, godot_version, identity_source, first_seen_unix, last_seen_unix, "
+        "created_at_unix, updated_at_unix"
+        ") VALUES ("
+        "1, 'scanner-skip-snapshot', 'scanner-skip-snapshot', '" + root.path.generic_string() + "', '" +
+        root.path.generic_string() + "', '" + (root.path / "project.godot").generic_string() +
+        "', '4.6.0-stable', 'test', 1, 1, 1, 1"
+        ");"
+    );
+
+    NativeScanPipeline pipeline(database);
+
+    ScanOptions persisted;
+    persisted.project_id = 1;
+    persisted.project_root = root.path;
+    persisted.include_hidden = true;
+    persisted.persist_to_database = true;
+    pipeline.run(persisted);
+
+    ScanOptions benchmark_like;
+    benchmark_like.project_id = 1;
+    benchmark_like.project_root = root.path;
+    benchmark_like.include_hidden = true;
+    benchmark_like.persist_to_database = false;
+    benchmark_like.load_existing_snapshot = false;
+
+    const gotool::project_scanner::NativeScanResult benchmark_like_result = pipeline.run_detailed(benchmark_like);
+    CHECK(benchmark_like_result.metrics.existing_snapshot_count == 0);
+}
+
+TEST_CASE("native_scan_pipeline_dirty_path_filter_limits_script_reparse_scope") {
+    TemporaryRoot root(make_temp_root("pipeline_dirty_path_filter"));
+    write_text(root.path / "project.godot", "[application]\n");
+    write_text(root.path / "scripts" / "player.gd", "class_name Player\nextends Node\n");
+    write_text(root.path / "scripts" / "enemy.gd", "class_name Enemy\nextends Node\n");
+
+    Database database((root.path / "scanner.sqlite3").string());
+    gotool::database::create_schema(database, 0);
+    database.exec(
+        "INSERT INTO projects ("
+        "id, project_uid, display_name, root_absolute_path, root_canonical_path, "
+        "project_file_absolute_path, godot_version, identity_source, first_seen_unix, last_seen_unix, "
+        "created_at_unix, updated_at_unix"
+        ") VALUES ("
+        "1, 'scanner-dirty-filter', 'scanner-dirty-filter', '" + root.path.generic_string() + "', '" +
+        root.path.generic_string() + "', '" + (root.path / "project.godot").generic_string() +
+        "', '4.6.0-stable', 'test', 1, 1, 1, 1"
+        ");"
+    );
+
+    NativeScanPipeline pipeline(database);
+
+    ScanOptions cold;
+    cold.project_id = 1;
+    cold.project_root = root.path;
+    cold.include_hidden = true;
+    cold.persist_to_database = true;
+    pipeline.run(cold);
+
+    write_text(root.path / "scripts" / "player.gd", "class_name Player\nextends Resource\n");
+
+    ScanOptions incremental;
+    incremental.project_id = 1;
+    incremental.project_root = root.path;
+    incremental.include_hidden = true;
+    incremental.persist_to_database = false;
+    incremental.collect_custom_classes = true;
+    incremental.load_existing_snapshot = true;
+    incremental.use_dirty_path_filter = true;
+    incremental.dirty_paths = { "scripts/player.gd" };
+
+    const gotool::project_scanner::NativeScanResult incremental_result = pipeline.run_detailed(incremental);
+    CHECK(incremental_result.metrics.scripts_parsed == 1);
+    CHECK(incremental_result.metrics.scripts_skipped_clean >= 1);
+}
+
+TEST_CASE("native_directory_enumerator_parallel_mode_preserves_deterministic_path_set") {
+    TemporaryRoot root(make_temp_root("parallel_enumerator"));
+    write_text(root.path / "project.godot", "[application]\n");
+
+    for (int32_t i = 0; i < 120; ++i) {
+        write_text(
+            root.path / "assets" / ("bucket_" + std::to_string(i % 12)) /
+                ("asset_" + std::to_string(i) + ".json"),
+            "{}\n"
+        );
+    }
+
+    gotool::project_scanner::SkipPolicy skip_policy;
+    NativeDirectoryEnumerator enumerator;
+
+    EnumerationOptions serial;
+    serial.root = root.path;
+    serial.include_hidden = true;
+    serial.skip_policy = &skip_policy;
+    serial.enable_parallel_traversal = false;
+    serial.deterministic_record_order = true;
+
+    EnumerationOptions parallel = serial;
+    parallel.enable_parallel_traversal = true;
+    parallel.max_parallel_workers = 4;
+
+    PathArena serial_arena;
+    std::vector<gotool::project_scanner::EntryRecord> serial_records;
+    const EnumerationResult serial_result = enumerator.enumerate(serial, serial_arena, serial_records);
+
+    PathArena parallel_arena;
+    std::vector<gotool::project_scanner::EntryRecord> parallel_records;
+    const EnumerationResult parallel_result = enumerator.enumerate(parallel, parallel_arena, parallel_records);
+
+    CHECK(serial_result.completed);
+    CHECK(parallel_result.completed);
+    CHECK(serial_result.files_seen == parallel_result.files_seen);
+    CHECK(serial_result.dirs_seen == parallel_result.dirs_seen);
+
+    std::multiset<std::string> serial_paths;
+    for (const auto &record : serial_records) {
+        serial_paths.insert(serial_arena.string_at(record.path_offset, record.path_length));
+    }
+
+    std::multiset<std::string> parallel_paths;
+    for (const auto &record : parallel_records) {
+        parallel_paths.insert(parallel_arena.string_at(record.path_offset, record.path_length));
+    }
+
+    CHECK(serial_paths == parallel_paths);
 }

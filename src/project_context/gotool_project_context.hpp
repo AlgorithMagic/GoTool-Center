@@ -46,6 +46,7 @@ public:
 
     Dictionary scan_project_inventory_fast(const Dictionary &options);
     Dictionary scan_current_project_fast(const Dictionary &options);
+    Dictionary benchmark_native_scan(const Dictionary &options);
 
     bool start_watcher();
     void stop_watcher();

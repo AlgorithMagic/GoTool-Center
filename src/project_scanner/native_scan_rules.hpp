@@ -55,6 +55,108 @@ enum class FileTypeId : uint16_t {
     BuildArtifact
 };
 
+enum class ExtensionId : uint16_t {
+    Unknown = 0,
+    TSCN,
+    SCN,
+    TRES,
+    RES,
+    GD,
+    CS,
+    SH,
+    GDSHADER,
+    GDSHADERINC,
+    SHADER,
+    IMPORT,
+    UID,
+    PNG,
+    JPG,
+    JPEG,
+    WEBP,
+    SVG,
+    BMP,
+    GIF,
+    TGA,
+    EXR,
+    WAV,
+    OGG,
+    OPUS,
+    MP3,
+    FLAC,
+    OTF,
+    TTF,
+    FNT,
+    WOFF,
+    WOFF2,
+    GLB,
+    GLTF,
+    FBX,
+    DAE,
+    BLEND,
+    MESHLIB,
+    GODOT,
+    CFG,
+    INI_FILE,
+    CONF_FILE,
+    CONFIG_FILE,
+    GD_EXTENSION_FILE,
+    JSON,
+    CSV,
+    YAML,
+    YML,
+    TOML,
+    XML,
+    DAT,
+    BYTES,
+    MD,
+    TXT,
+    RST,
+    ADOC,
+    DLL,
+    SO,
+    DYLIB,
+    LIB,
+    STATICLIB_A,
+    OBJ,
+    OBJECT_O,
+    PDB,
+    EXP,
+    DB,
+    SQLITE,
+    SQLITE3,
+    ZIP,
+    TAR,
+    GZ,
+    RAR,
+    SEVEN_Z,
+    NODE,
+    OBJECT,
+    RESOURCE,
+    MD5,
+    CACHE,
+    ASE,
+    ASEPRITE,
+    KRA,
+    PSD,
+    XCF,
+    SPP,
+    BIN,
+    SRC_C,
+    SRC_H,
+    CPP,
+    HPP,
+    PY,
+    JS,
+    TS,
+    RS,
+    GO,
+    JAVA,
+    BLEND1,
+    BLEND2,
+    ASSBIN,
+    REMAP
+};
+
 enum class GodotTypeHint : uint16_t {
     NotGodotTyped = 0,
     PackedScene,
@@ -177,11 +279,17 @@ struct ScanOptions {
     bool persist_to_database = true;
     bool collect_custom_classes = true;
     bool include_deleted = false;
+    bool load_existing_snapshot = true;
+    bool use_dirty_path_filter = false;
+    bool enable_parallel_traversal = false;
+    bool deterministic_record_order = true;
+    int64_t max_parallel_workers = 0;
     int64_t result_limit = 0;
     int64_t scan_run_id = 0;
     ScanGeneration scan_generation = 0;
     int64_t started_at_unix = 0;
     int64_t batch_size = 1000;
+    std::vector<std::string> dirty_paths;
 };
 
 struct ScanResultSummary {
@@ -216,6 +324,16 @@ struct DirtyCheckResult {
     DirtyReason reason = DirtyReason::NewPath;
 };
 
+struct EntryFacts {
+    std::string_view project_relative_path;
+    std::string_view project_relative_path_lower;
+    std::string_view file_name;
+    std::string_view extension;
+    EntryKind entry_kind = EntryKind::File;
+    ExtensionId extension_id = ExtensionId::Unknown;
+    bool hidden = false;
+};
+
 class PathArena {
 public:
     uint32_t append(std::string_view value);
@@ -233,6 +351,8 @@ private:
 struct EntryRecord {
     uint32_t path_offset = 0;
     uint32_t path_length = 0;
+    uint32_t lower_path_offset = 0;
+    uint32_t lower_path_length = 0;
     uint32_t name_offset = 0;
     uint32_t name_length = 0;
     uint32_t extension_offset = 0;
@@ -246,6 +366,7 @@ struct EntryRecord {
     uint64_t platform_file_id_low = 0;
     uint32_t flags = 0;
     EntryKind entry_kind = EntryKind::File;
+    ExtensionId extension_id = ExtensionId::Unknown;
     FileTypeId file_type_id = FileTypeId::Unknown;
     GodotTypeHint godot_type_hint = GodotTypeHint::NotGodotTyped;
     TypeHintSource type_hint_source = TypeHintSource::None;
@@ -262,7 +383,12 @@ class SkipPolicy {
 public:
     SkipPolicy();
 
+    bool should_skip_normalized(std::string_view project_relative_path) const;
+    bool should_skip_external(std::string_view project_relative_path) const;
     bool should_skip(std::string_view project_relative_path) const;
+
+    void add_prefix_normalized(std::string prefix);
+    void add_prefix_external(std::string prefix);
     void add_prefix(std::string prefix);
 
 private:
@@ -273,8 +399,11 @@ std::string normalize_project_path(std::string_view path);
 std::string extension_from_path(std::string_view path);
 std::string file_name_from_path(std::string_view path);
 std::string lower_ascii(std::string_view value);
+ExtensionId extension_id_from_extension(std::string_view extension);
 bool is_script_extension(std::string_view extension);
 ScriptLanguage language_from_extension(std::string_view extension);
+FileTypeId classify_entry_from_facts(const EntryFacts &facts);
+GodotTypeHint detect_godot_type_hint_from_facts(const EntryFacts &facts, FileTypeId file_type);
 FileTypeId classify_entry(std::string_view project_relative_path, EntryKind kind);
 GodotTypeHint detect_godot_type_hint(std::string_view project_relative_path, FileTypeId file_type);
 TypeHintSource type_hint_source_for(GodotTypeHint hint);
@@ -299,6 +428,7 @@ bool is_builtin_node_type_hint(std::string_view type_name);
 bool is_builtin_resource_type_hint(std::string_view type_name);
 
 const char *to_string(EntryKind value);
+const char *to_string(ExtensionId value);
 const char *to_string(FileTypeId value);
 const char *to_string(GodotTypeHint value);
 const char *to_string(TypeHintSource value);

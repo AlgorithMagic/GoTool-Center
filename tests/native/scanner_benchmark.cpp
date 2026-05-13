@@ -155,9 +155,11 @@ BenchmarkScenarioResult run_debug_export_materialization_scenario(Database &data
         materialized += static_cast<int64_t>(page.size());
     }
 
-    result.metrics.total_wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+    const int64_t materialization_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - start
     ).count();
+    result.metrics.total_wall_ms = materialization_ms;
+    result.metrics.godot_materialization_ms = materialization_ms;
     result.metrics.files_seen = file_count;
     result.metrics.scripts_parsed = class_count;
     result.metrics.ui_rows_materialized = materialized;
@@ -173,6 +175,7 @@ std::string scenario_json(const BenchmarkScenarioResult &scenario) {
         "      \"status\": \"" + scenario.summary.status + "\",\n"
         "      \"total_wall_ms\": " + std::to_string(scenario.metrics.total_wall_ms) + ",\n"
         "      \"traversal_ms\": " + std::to_string(scenario.metrics.traversal_ms) + ",\n"
+        "      \"classification_ms\": " + std::to_string(scenario.metrics.classification_ms) + ",\n"
         "      \"existing_snapshot_load_ms\": " + std::to_string(scenario.metrics.existing_snapshot_load_ms) + ",\n"
         "      \"reserve_setup_ms\": " + std::to_string(scenario.metrics.reserve_setup_ms) + ",\n"
         "      \"dirty_check_ms\": " + std::to_string(scenario.metrics.dirty_check_ms) + ",\n"
@@ -187,6 +190,7 @@ std::string scenario_json(const BenchmarkScenarioResult &scenario) {
         "      \"sqlite_custom_class_ms\": " + std::to_string(scenario.metrics.sqlite_custom_class_ms) + ",\n"
         "      \"sqlite_tombstone_ms\": " + std::to_string(scenario.metrics.sqlite_tombstone_ms) + ",\n"
         "      \"sqlite_deleted_reconcile_ms\": " + std::to_string(scenario.metrics.sqlite_deleted_reconcile_ms) + ",\n"
+        "      \"godot_materialization_ms\": " + std::to_string(scenario.metrics.godot_materialization_ms) + ",\n"
         "      \"files_seen\": " + std::to_string(scenario.metrics.files_seen) + ",\n"
         "      \"dirs_seen\": " + std::to_string(scenario.metrics.dirs_seen) + ",\n"
         "      \"entries_clean\": " + std::to_string(scenario.metrics.entries_clean) + ",\n"
