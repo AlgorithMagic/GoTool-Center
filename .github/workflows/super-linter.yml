@@ -38,3 +38,7 @@ jobs:
 
           # Keep this false unless you enabled issues/pull-requests write above.
           ENABLE_GITHUB_PULL_REQUEST_SUMMARY_COMMENT: false
+          FILTER_REGEX_EXCLUDE: >-
+            (^|/)(compile_commands\.json|\.sconsign\.dblite)$|
+            (^|/)(build|bin|out|dist)/|
+            (^|/)godot-cpp/
