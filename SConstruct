@@ -93,6 +93,11 @@ def configure_sqlite_c_flags(build_env, active_platform: str) -> None:
         ])
 
 
+def remove_compiler_flag(build_env, variable_name: str, flag: str) -> None:
+    current_flags = build_env.get(variable_name, [])
+    build_env[variable_name] = [value for value in current_flags if str(value) != flag]
+
+
 def configure_native_diagnostic_flags(
     build_env,
     active_platform: str,
@@ -107,6 +112,10 @@ def configure_native_diagnostic_flags(
             "coverage=1 and sanitizer=... are currently supported only on Linux. "
             "Use WSL2/Linux for local sanitizer and coverage runs."
         )
+
+    # godot-cpp enables this GCC-specific flag for hot reload in template_debug.
+    # Sanitizer builds force clang, which may reject it.
+    remove_compiler_flag(build_env, "CXXFLAGS", "-fno-gnu-unique")
 
     if active_sanitizer == "asan_ubsan":
         build_env.Replace(CXX="clang++")
@@ -247,6 +256,9 @@ def collect_native_testable_production_sources() -> list[str]:
 def configure_libfuzzer_flags(build_env, active_platform: str) -> None:
     if active_platform != "linux":
         raise RuntimeError("fuzz=1 is currently supported only on Linux/Clang")
+
+    # Keep clang-compatible flags in fuzz-only builds as well.
+    remove_compiler_flag(build_env, "CXXFLAGS", "-fno-gnu-unique")
 
     build_env.Replace(CXX="clang++")
     build_env.Replace(CC="clang")
