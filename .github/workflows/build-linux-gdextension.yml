@@ -60,7 +60,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: recursive
           fetch-depth: 0
@@ -70,7 +70,7 @@ jobs:
           python -c "from pathlib import Path; required = ['godot-cpp/SConstruct', 'third-party/godot/extension_api.json', 'third-party/sqlite3/sqlite3.c', 'SConstruct']; missing = [p for p in required if not Path(p).is_file()]; print('Missing files:', missing); raise SystemExit(1 if missing else 0)"
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -99,7 +99,7 @@ jobs:
           python -c "from pathlib import Path; root = Path('project/addons/GoToolCenter/bin'); print('Output directory:', root.resolve()); [print(p.as_posix()) for p in sorted(root.glob('*'))]"
 
       - name: Upload platform artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact_name }}
           path: |
@@ -114,7 +114,7 @@ jobs:
 
     steps:
       - name: Download all platform artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
 
@@ -131,7 +131,7 @@ jobs:
           find package -type f -print
 
       - name: Upload combined native library package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: gotool-center-all-platforms
           path: package/**
