@@ -1,3 +1,5 @@
+// Copyright 2026 AlgorithMagic
+
 extends SceneTree
 
 

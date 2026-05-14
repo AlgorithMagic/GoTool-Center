@@ -12,13 +12,275 @@ GODOT_CPP_SCONSTRUCT = Path("godot-cpp") / "SConstruct"
 SQLITE_SOURCE = Path("third-party") / "sqlite3" / "sqlite3.c"
 EXTENSION_API_FILE = Path("third-party") / "godot" / "extension_api.json"
 
+TRUE_VALUES = {"1", "true", "yes", "on"}
+
+NATIVE_TEST_FILES = [
+    "tests/native/test_main.cpp",
+    "tests/native/scanner_benchmark.cpp",
+    "tests/native/schema_v2_tests.cpp",
+    "tests/native/scanner_native_tests.cpp",
+]
+
+FUZZ_SCRIPT_PARSER_SOURCES = [
+    "tests/fuzz/native_script_parser_fuzz.cpp",
+    "src/project_scanner/native_script_parser.cpp",
+    "src/project_scanner/native_scan_rules.cpp",
+]
+
+
+def read_bool_argument(name: str, default: str) -> bool:
+    return str(ARGUMENTS.pop(name, default)).lower() in TRUE_VALUES
+
+
+def require_source_files(paths: list[str]) -> None:
+    missing_paths = [path for path in paths if not Path(path).is_file()]
+
+    if missing_paths:
+        formatted_paths = "\n".join(f"  - {path}" for path in missing_paths)
+        raise RuntimeError(f"Missing required source file(s):\n{formatted_paths}")
+
+
+def remove_existing_cpp_standard_flags(build_env, active_platform: str) -> None:
+    existing_cxxflags = [str(flag) for flag in build_env.get("CXXFLAGS", [])]
+
+    if active_platform == "windows":
+        build_env["CXXFLAGS"] = [
+            flag for flag in existing_cxxflags if not flag.startswith("/std:")
+        ]
+    else:
+        build_env["CXXFLAGS"] = [
+            flag for flag in existing_cxxflags if not flag.startswith("-std=")
+        ]
+
+
+def configure_cpp_standard_and_warnings(build_env, active_platform: str) -> None:
+    if active_platform == "windows":
+        build_env.AppendUnique(CXXFLAGS=[
+            "/std:c++20",
+            "/permissive-",
+            "/EHsc",
+        ])
+    elif active_platform in {"linux", "macos"}:
+        build_env.AppendUnique(CXXFLAGS=[
+            "-std=c++20",
+            "-fexceptions",
+            "-Wall",
+            "-Wextra",
+            "-Wpedantic",
+        ])
+
+
+def configure_sqlite_c_flags(build_env, active_platform: str) -> None:
+    if active_platform == "windows":
+        build_env.AppendUnique(CCFLAGS=[
+            "/std:c17",
+            "/wd4090",
+            "/wd4996",
+        ])
+    elif active_platform == "linux":
+        build_env.AppendUnique(CCFLAGS=[
+            "-std=c17",
+            "-Wno-discarded-qualifiers",
+            "-Wno-unused-parameter",
+            "-Wno-unused-variable",
+        ])
+    elif active_platform == "macos":
+        build_env.AppendUnique(CCFLAGS=[
+            "-std=c17",
+            "-Wno-incompatible-pointer-types-discards-qualifiers",
+            "-Wno-unused-parameter",
+            "-Wno-unused-variable",
+        ])
+
+
+def configure_native_diagnostic_flags(
+    build_env,
+    active_platform: str,
+    active_sanitizer: str,
+    coverage_enabled: bool,
+) -> None:
+    if active_sanitizer == "none" and not coverage_enabled:
+        return
+
+    if active_platform != "linux":
+        raise RuntimeError(
+            "coverage=1 and sanitizer=... are currently supported only on Linux. "
+            "Use WSL2/Linux for local sanitizer and coverage runs."
+        )
+
+    if active_sanitizer == "asan_ubsan":
+        build_env.Replace(CXX="clang++")
+        build_env.Replace(CC="clang")
+
+        build_env.AppendUnique(CXXFLAGS=[
+            "-fsanitize=address,undefined",
+            "-fno-omit-frame-pointer",
+            "-O1",
+            "-g",
+        ])
+
+        build_env.AppendUnique(CCFLAGS=[
+            "-fsanitize=address,undefined",
+            "-fno-omit-frame-pointer",
+            "-O1",
+            "-g",
+        ])
+
+        build_env.AppendUnique(LINKFLAGS=[
+            "-fsanitize=address,undefined",
+        ])
+
+    elif active_sanitizer == "tsan":
+        if coverage_enabled:
+            raise RuntimeError("coverage=1 should not be combined with sanitizer=tsan")
+
+        build_env.Replace(CXX="clang++")
+        build_env.Replace(CC="clang")
+
+        build_env.AppendUnique(CXXFLAGS=[
+            "-fsanitize=thread",
+            "-fno-omit-frame-pointer",
+            "-O1",
+            "-g",
+        ])
+
+        build_env.AppendUnique(CCFLAGS=[
+            "-fsanitize=thread",
+            "-fno-omit-frame-pointer",
+            "-O1",
+            "-g",
+        ])
+
+        build_env.AppendUnique(LINKFLAGS=[
+            "-fsanitize=thread",
+        ])
+
+    elif active_sanitizer != "none":
+        raise RuntimeError(
+            "Unsupported sanitizer. Use sanitizer=none, sanitizer=asan_ubsan, or sanitizer=tsan."
+        )
+
+    if coverage_enabled:
+        build_env.AppendUnique(CXXFLAGS=[
+            "--coverage",
+            "-O0",
+            "-g",
+        ])
+
+        build_env.AppendUnique(CCFLAGS=[
+            "--coverage",
+            "-O0",
+            "-g",
+        ])
+
+        build_env.AppendUnique(LINKFLAGS=[
+            "--coverage",
+        ])
+
+
+def shared_library_extension_for_platform(active_platform: str) -> str:
+    if active_platform == "windows":
+        return ".dll"
+
+    if active_platform == "linux":
+        return ".so"
+
+    if active_platform == "macos":
+        return ".dylib"
+
+    raise RuntimeError(f"Unsupported platform: {active_platform}")
+
+
+def collect_extension_cpp_sources(doc_data_source: Path) -> list[str]:
+    sources = sorted(
+        path.as_posix()
+        for path in Path("src").rglob("*.cpp")
+        if path.as_posix() != doc_data_source.as_posix()
+    )
+
+    if not sources:
+        raise RuntimeError("No C++ source files found under src/")
+
+    return sources
+
+
+def collect_native_testable_production_sources() -> list[str]:
+    collected_sources: list[str] = []
+    seen_sources: set[str] = set()
+
+    excluded_sources = {
+        (Path("src") / "gen" / "doc_data.gen.cpp").as_posix(),
+        (Path("src") / "register_types.cpp").as_posix(),
+    }
+
+    def append_source(path: Path) -> None:
+        source_path = path.as_posix()
+
+        if source_path in excluded_sources:
+            return
+
+        if source_path in seen_sources:
+            return
+
+        seen_sources.add(source_path)
+        collected_sources.append(source_path)
+
+    database_root = Path("src") / "database"
+    if database_root.is_dir():
+        for path in sorted(database_root.rglob("*.cpp")):
+            append_source(path)
+
+    project_scanner_root = Path("src") / "project_scanner"
+    if project_scanner_root.is_dir():
+        for path in sorted(project_scanner_root.rglob("native_*.cpp")):
+            append_source(path)
+
+    if not collected_sources:
+        raise RuntimeError(
+            "No native-testable production source files found. "
+            "Expected files under src/database/ or src/project_scanner/native_*.cpp."
+        )
+
+    return collected_sources
+
+
+def configure_libfuzzer_flags(build_env, active_platform: str) -> None:
+    if active_platform != "linux":
+        raise RuntimeError("fuzz=1 is currently supported only on Linux/Clang")
+
+    build_env.Replace(CXX="clang++")
+    build_env.Replace(CC="clang")
+
+    build_env.AppendUnique(CXXFLAGS=[
+        "-fsanitize=fuzzer,address,undefined",
+        "-fno-omit-frame-pointer",
+        "-O1",
+        "-g",
+    ])
+
+    build_env.AppendUnique(CCFLAGS=[
+        "-fsanitize=address,undefined",
+        "-fno-omit-frame-pointer",
+        "-O1",
+        "-g",
+    ])
+
+    build_env.AppendUnique(LINKFLAGS=[
+        "-fsanitize=fuzzer,address,undefined",
+    ])
+
+
 platform = ARGUMENTS.get("platform", "")
 build_target = ARGUMENTS.get("target", "")
 arch = ARGUMENTS.get("arch", "")
-build_doctest = str(ARGUMENTS.pop("doctest", "0")).lower() in {"1", "true", "yes"}
-build_compiledb = str(ARGUMENTS.pop("compiledb", "1")).lower() in {
-    "1", "true", "yes", "on"
-}
+
+build_extension = read_bool_argument("extension", "1")
+build_doctest = read_bool_argument("doctest", "0")
+build_compiledb = read_bool_argument("compiledb", "1")
+build_coverage = read_bool_argument("coverage", "0")
+build_fuzz = read_bool_argument("fuzz", "0")
+
+sanitizer = str(ARGUMENTS.pop("sanitizer", "none")).lower()
 
 if not platform:
     raise RuntimeError("Missing required SCons argument: platform=windows|linux|macos")
@@ -34,6 +296,22 @@ if platform not in {"windows", "linux", "macos"}:
 
 if build_target not in {"template_debug", "template_release"}:
     raise RuntimeError(f"Unsupported target: {build_target}")
+
+if sanitizer not in {"none", "asan_ubsan", "tsan"}:
+    raise RuntimeError(
+        "Unsupported sanitizer. Use sanitizer=none, sanitizer=asan_ubsan, or sanitizer=tsan."
+    )
+
+if build_fuzz and sanitizer == "tsan":
+    raise RuntimeError("fuzz=1 cannot be combined with sanitizer=tsan")
+
+if build_coverage and sanitizer == "tsan":
+    raise RuntimeError("coverage=1 cannot be combined with sanitizer=tsan")
+
+if not build_extension and not build_doctest and not build_fuzz:
+    raise RuntimeError(
+        "No build target selected. Use extension=1, doctest=1, and/or fuzz=1."
+    )
 
 if not GODOT_CPP_SCONSTRUCT.is_file():
     raise RuntimeError(
@@ -54,11 +332,8 @@ BIN_DIR.mkdir(parents=True, exist_ok=True)
 
 env = SConscript(str(GODOT_CPP_SCONSTRUCT))
 
-existing_cxxflags = [str(flag) for flag in env.get("CXXFLAGS", [])]
-if platform == "windows":
-    env["CXXFLAGS"] = [flag for flag in existing_cxxflags if not flag.startswith("/std:")]
-else:
-    env["CXXFLAGS"] = [flag for flag in existing_cxxflags if not flag.startswith("-std=")]
+remove_existing_cpp_standard_flags(env, platform)
+configure_cpp_standard_and_warnings(env, platform)
 
 env.AppendUnique(CPPPATH=[
     "src",
@@ -71,121 +346,74 @@ env.AppendUnique(CPPDEFINES=[
     "SQLITE_OMIT_LOAD_EXTENSION",
 ])
 
-if platform == "windows":
-    env.AppendUnique(CXXFLAGS=[
-        "/std:c++20",
-        "/permissive-",
-        "/EHsc",
-    ])
-elif platform in {"linux", "macos"}:
-    env.AppendUnique(CXXFLAGS=[
-        "-std=c++20",
-        "-fexceptions",
-        "-Wall",
-        "-Wextra",
-        "-Wpedantic",
-    ])
-
-doc_data_source = Path("src") / "gen" / "doc_data.gen.cpp"
-cpp_sources = sorted(
-    path.as_posix()
-    for path in Path("src").rglob("*.cpp")
-    if path != doc_data_source
+configure_native_diagnostic_flags(
+    build_env=env,
+    active_platform=platform,
+    active_sanitizer=sanitizer,
+    coverage_enabled=build_coverage,
 )
-
-if not cpp_sources:
-    raise RuntimeError("No C++ source files found under src/")
-
-if build_target == "template_debug":
-    doc_class_files = sorted(path.as_posix() for path in Path("doc_classes").glob("*.xml"))
-    if doc_class_files:
-        doc_gen_dir = doc_data_source.parent
-        doc_gen_dir.mkdir(parents=True, exist_ok=True)
-        doc_data = env.GodotCPPDocData(
-            doc_data_source.as_posix(),
-            source=doc_class_files,
-        )
-        cpp_sources.append(doc_data)
 
 object_dir = Path("build") / "scons" / platform / build_target / arch
 object_dir.mkdir(parents=True, exist_ok=True)
 
-sqlite_env = env.Clone()
+default_targets = []
+compilation_database_inputs = []
 
-if platform == "windows":
-    sqlite_env.AppendUnique(CCFLAGS=[
-        "/std:c17",
-    ])
-    sqlite_env.AppendUnique(CCFLAGS=[
-        "/wd4090",
-        "/wd4996",
-    ])
-elif platform == "linux":
-    sqlite_env.AppendUnique(CCFLAGS=[
-        "-std=c17",
-        "-Wno-discarded-qualifiers",
-        "-Wno-unused-parameter",
-        "-Wno-unused-variable",
-    ])
-elif platform == "macos":
-    sqlite_env.AppendUnique(CCFLAGS=[
-        "-std=c17",
-        "-Wno-incompatible-pointer-types-discards-qualifiers",
-        "-Wno-unused-parameter",
-        "-Wno-unused-variable",
-    ])
+doc_data_source = Path("src") / "gen" / "doc_data.gen.cpp"
 
-sqlite_objects = sqlite_env.SharedObject(
-    target=(object_dir / "sqlite3").as_posix(),
-    source=SQLITE_SOURCE.as_posix(),
-)
+if build_extension:
+    cpp_sources = collect_extension_cpp_sources(doc_data_source)
 
-if platform == "windows":
-    shared_library_extension = ".dll"
-elif platform == "linux":
-    shared_library_extension = ".so"
-elif platform == "macos":
-    shared_library_extension = ".dylib"
-else:
-    raise RuntimeError(f"Unsupported platform: {platform}")
+    if build_target == "template_debug":
+        doc_class_files = sorted(
+            path.as_posix()
+            for path in Path("doc_classes").glob("*.xml")
+        )
 
-library_filename = f"lib{PROJECT_NAME}{env['suffix']}{shared_library_extension}"
-library_target = (BIN_DIR / library_filename).as_posix()
+        if doc_class_files:
+            doc_gen_dir = doc_data_source.parent
+            doc_gen_dir.mkdir(parents=True, exist_ok=True)
 
-library = env.SharedLibrary(
-    target=library_target,
-    source=cpp_sources + sqlite_objects,
-)
+            doc_data = env.GodotCPPDocData(
+                doc_data_source.as_posix(),
+                source=doc_class_files,
+            )
 
-default_targets = [library]
+            cpp_sources.append(doc_data)
 
-if build_compiledb:
-    env.Tool("compilation_db")
+    sqlite_env = env.Clone()
+    configure_sqlite_c_flags(sqlite_env, platform)
 
-    compile_commands = env.CompilationDatabase(
-        target="compile_commands.json",
-        source=library,
+    sqlite_objects = sqlite_env.SharedObject(
+        target=(object_dir / "sqlite3").as_posix(),
+        source=SQLITE_SOURCE.as_posix(),
     )
 
-    default_targets.append(compile_commands)
-    env.Alias("compiledb", compile_commands)
+    shared_library_extension = shared_library_extension_for_platform(platform)
+    library_filename = f"lib{PROJECT_NAME}{env['suffix']}{shared_library_extension}"
+    library_target = (BIN_DIR / library_filename).as_posix()
+
+    library = env.SharedLibrary(
+        target=library_target,
+        source=cpp_sources + sqlite_objects,
+    )
+
+    default_targets.append(library)
+    compilation_database_inputs.append(library)
+
+    env.Alias("extension", library)
 
 if build_doctest:
-    native_test_sources = [
-        "tests/native/test_main.cpp",
-        "tests/native/scanner_benchmark.cpp",
-        "tests/native/schema_v2_tests.cpp",
-        "tests/native/scanner_native_tests.cpp",
-        "src/database/gotool_database.cpp",
-        "src/database/gotool_schema.cpp",
-        "src/database/gotool_project_registry_repository.cpp",
-        "src/project_scanner/native_directory_enumerator.cpp",
-        "src/project_scanner/native_scan_pipeline.cpp",
-        "src/project_scanner/native_scan_rules.cpp",
-        "src/project_scanner/native_script_parser.cpp",
-    ]
+    require_source_files(NATIVE_TEST_FILES)
 
-    native_test_env = env
+    native_test_sources = (
+        NATIVE_TEST_FILES
+        + collect_native_testable_production_sources()
+        + [SQLITE_SOURCE.as_posix()]
+    )
+
+    native_test_env = env.Clone()
+    configure_sqlite_c_flags(native_test_env, platform)
 
     native_test_target = (
         Path("build") / "tests" / platform / build_target / arch / "gotool_native_tests"
@@ -193,9 +421,44 @@ if build_doctest:
 
     native_test_binary = native_test_env.Program(
         target=native_test_target,
-        source=native_test_sources + [SQLITE_SOURCE.as_posix()],
+        source=native_test_sources,
     )
 
     default_targets.append(native_test_binary)
+    compilation_database_inputs.append(native_test_binary)
+
+    env.Alias("doctest", native_test_binary)
+    env.Alias("tests", native_test_binary)
+
+if build_fuzz:
+    require_source_files(FUZZ_SCRIPT_PARSER_SOURCES)
+
+    fuzz_env = env.Clone()
+    configure_libfuzzer_flags(fuzz_env, platform)
+
+    fuzz_target = (
+        Path("build") / "fuzz" / platform / build_target / arch / "native_script_parser_fuzz"
+    ).as_posix()
+
+    fuzz_binary = fuzz_env.Program(
+        target=fuzz_target,
+        source=FUZZ_SCRIPT_PARSER_SOURCES,
+    )
+
+    default_targets.append(fuzz_binary)
+    compilation_database_inputs.append(fuzz_binary)
+
+    env.Alias("fuzz", fuzz_binary)
+
+if build_compiledb and compilation_database_inputs:
+    env.Tool("compilation_db")
+
+    compile_commands = env.CompilationDatabase(
+        target="compile_commands.json",
+        source=compilation_database_inputs,
+    )
+
+    default_targets.append(compile_commands)
+    env.Alias("compiledb", compile_commands)
 
 Default(default_targets)

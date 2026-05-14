@@ -1,3 +1,5 @@
+// Copyright 2026 AlgorithMagic
+
 #include "project_scanner/gotool_project_scanner_rules.hpp"
 
 #include <godot_cpp/classes/file_access.hpp>

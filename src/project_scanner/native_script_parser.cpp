@@ -1,3 +1,5 @@
+// Copyright 2026 AlgorithMagic
+
 #include "project_scanner/native_script_parser.hpp"
 
 #include <algorithm>

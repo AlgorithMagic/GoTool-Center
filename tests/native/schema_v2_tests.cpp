@@ -1,3 +1,5 @@
+// Copyright 2026 AlgorithMagic
+
 #include "database/gotool_database.hpp"
 #include "database/gotool_project_registry_repository.hpp"
 #include "database/gotool_schema.hpp"

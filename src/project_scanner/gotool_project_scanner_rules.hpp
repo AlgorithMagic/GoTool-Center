@@ -1,3 +1,5 @@
+// Copyright 2026 AlgorithMagic
+
 #pragma once
 
 #include <godot_cpp/variant/dictionary.hpp>

@@ -1,3 +1,5 @@
+// Copyright 2026 AlgorithMagic
+
 #include "project_scanner/file_watcher.hpp"
 
 namespace gotool::project_scanner {

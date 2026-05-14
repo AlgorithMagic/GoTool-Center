@@ -1,3 +1,5 @@
+// Copyright 2026 AlgorithMagic
+
 /* THIS FILE IS GENERATED DO NOT EDIT */
 
 #include <godot_cpp/godot.hpp>

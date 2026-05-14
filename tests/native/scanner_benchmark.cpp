@@ -1,3 +1,5 @@
+// Copyright 2026 AlgorithMagic
+
 #include "database/gotool_database.hpp"
 #include "database/gotool_schema.hpp"
 #include "project_scanner/native_scan_pipeline.hpp"

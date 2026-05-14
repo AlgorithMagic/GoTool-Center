@@ -1,0 +1,55 @@
+name: Native Fuzzing
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 9 * * *"
+
+permissions: {}
+
+jobs:
+  fuzz-native-script-parser:
+    name: Fuzz native_script_parser
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            clang \
+            lld \
+            python3 \
+            scons
+
+      - name: Build fuzz target
+        run: |
+          scons \
+            platform=linux \
+            target=template_debug \
+            arch=x86_64 \
+            fuzz=1 \
+            sanitizer=asan_ubsan \
+            compiledb=0
+
+      - name: Run fuzz target
+        run: |
+          mkdir -p tests/fuzz/corpus/script_parser
+          ./build/fuzz/linux/template_debug/x86_64/native_script_parser_fuzz \
+            tests/fuzz/corpus/script_parser \
+            -max_total_time=300 \
+            -print_final_stats=1
+        env:
+          ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1

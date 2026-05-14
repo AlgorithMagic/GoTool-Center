@@ -1,3 +1,5 @@
+// Copyright 2026 AlgorithMagic
+
 #include "database/gotool_project_inventory_repository.hpp"
 
 #include <godot_cpp/variant/char_string.hpp>

@@ -1,3 +1,5 @@
+// Copyright 2026 AlgorithMagic
+
 #include "project_context/gotool_project_context_helpers.hpp"
 
 #include <godot_cpp/variant/string.hpp>

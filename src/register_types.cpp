@@ -1,3 +1,5 @@
+// Copyright 2026 AlgorithMagic
+
 // register_types.cpp
 #include "register_types.h"
 

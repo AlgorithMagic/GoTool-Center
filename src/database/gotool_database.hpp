@@ -1,3 +1,5 @@
+// Copyright 2026 AlgorithMagic
+
 #pragma once
 
 #include <sqlite3.h>

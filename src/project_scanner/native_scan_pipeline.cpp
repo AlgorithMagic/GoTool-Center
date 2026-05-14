@@ -1,3 +1,5 @@
+// Copyright 2026 AlgorithMagic
+
 #include "project_scanner/native_scan_pipeline.hpp"
 
 #include <algorithm>
