@@ -446,23 +446,23 @@ if build_extension:
 if build_doctest:
     require_source_files(NATIVE_TEST_FILES)
 
-    native_test_sources = (
-        NATIVE_TEST_FILES
-        + collect_native_testable_production_sources()
-        + [SQLITE_SOURCE.as_posix()]
-    )
+native_test_sources = (
+    NATIVE_TEST_FILES
+    + collect_native_testable_production_sources()
+)
 
-    native_test_env = env.Clone()
-    configure_sqlite_c_flags(native_test_env, platform)
+sqlite_test_env = env.Clone()
+configure_sqlite_c_flags(sqlite_test_env, platform)
 
-    native_test_target = (
-        Path("build") / "tests" / platform / build_target / arch / "gotool_native_tests"
-    ).as_posix()
+sqlite_test_object = sqlite_test_env.Object(
+    target=(object_dir / "sqlite3_native_tests").as_posix(),
+    source=SQLITE_SOURCE.as_posix(),
+)
 
-    native_test_binary = native_test_env.Program(
-        target=native_test_target,
-        source=native_test_sources,
-    )
+native_test_binary = env.Program(
+    target=native_test_target,
+    source=native_test_sources + sqlite_test_object,
+)
 
     default_targets.append(native_test_binary)
     compilation_database_inputs.append(native_test_binary)
