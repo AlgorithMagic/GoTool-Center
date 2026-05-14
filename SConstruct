@@ -464,11 +464,11 @@ native_test_binary = env.Program(
     source=native_test_sources + sqlite_test_object,
 )
 
-    default_targets.append(native_test_binary)
-    compilation_database_inputs.append(native_test_binary)
+default_targets.append(native_test_binary)
+compilation_database_inputs.append(native_test_binary)
 
-    env.Alias("doctest", native_test_binary)
-    env.Alias("tests", native_test_binary)
+env.Alias("doctest", native_test_binary)
+env.Alias("tests", native_test_binary)
 
 if build_fuzz:
     require_source_files(FUZZ_SCRIPT_PARSER_SOURCES)
