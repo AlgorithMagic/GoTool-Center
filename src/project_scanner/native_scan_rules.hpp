@@ -1,6 +1,7 @@
 // Copyright 2026 AlgorithMagic
 
-#pragma once
+#ifndef GOTOOL_PROJECT_SCANNER_NATIVE_SCAN_RULES_HPP
+#define GOTOOL_PROJECT_SCANNER_NATIVE_SCAN_RULES_HPP
 
 #include <atomic>
 #include <cstdint>
@@ -20,12 +21,18 @@ static constexpr int64_t SCENE_PARSER_VERSION = 1;
 static constexpr int64_t CLASSIFIER_VERSION = 2;
 static constexpr int64_t SCANNER_SCHEMA_VERSION = 8;
 
-enum class EntryKind : uint8_t {
+// The serialized enum widths are intentional for on-disk compatibility.
+// NOLINTNEXTLINE(performance-enum-size)
+enum class EntryKind : uint8_t
+{
     File = 0,
     Directory = 1
 };
 
-enum class FileTypeId : uint16_t {
+// The serialized enum widths are intentional for on-disk compatibility.
+// NOLINTNEXTLINE(performance-enum-size)
+enum class FileTypeId : uint16_t
+{
     Unknown = 0,
     Folder,
     GodotScene,
@@ -59,7 +66,11 @@ enum class FileTypeId : uint16_t {
     BuildArtifact
 };
 
-enum class ExtensionId : uint16_t {
+// NOLINTBEGIN(readability-identifier-naming)
+// The serialized enum widths are intentional for on-disk compatibility.
+// NOLINTNEXTLINE(performance-enum-size)
+enum class ExtensionId : uint16_t
+{
     Unknown = 0,
     TSCN,
     SCN,
@@ -160,8 +171,12 @@ enum class ExtensionId : uint16_t {
     ASSBIN,
     REMAP
 };
+// NOLINTEND(readability-identifier-naming)
 
-enum class GodotTypeHint : uint16_t {
+// The serialized enum widths are intentional for on-disk compatibility.
+// NOLINTNEXTLINE(performance-enum-size)
+enum class GodotTypeHint : uint16_t
+{
     NotGodotTyped = 0,
     PackedScene,
     Resource,
@@ -181,7 +196,10 @@ enum class GodotTypeHint : uint16_t {
     ProjectSettings
 };
 
-enum class TypeHintSource : uint8_t {
+// The serialized enum widths are intentional for on-disk compatibility.
+// NOLINTNEXTLINE(performance-enum-size)
+enum class TypeHintSource : uint8_t
+{
     None = 0,
     Extension,
     Path,
@@ -190,13 +208,19 @@ enum class TypeHintSource : uint8_t {
     ExplicitInspection
 };
 
-enum class DirtyState : uint8_t {
+// The serialized enum widths are intentional for on-disk compatibility.
+// NOLINTNEXTLINE(performance-enum-size)
+enum class DirtyState : uint8_t
+{
     Clean = 0,
     Dirty,
     Deleted
 };
 
-enum class DirtyReason : uint16_t {
+// The serialized enum widths are intentional for on-disk compatibility.
+// NOLINTNEXTLINE(performance-enum-size)
+enum class DirtyReason : uint16_t
+{
     None = 0,
     NewPath,
     DeletedPath,
@@ -213,7 +237,10 @@ enum class DirtyReason : uint16_t {
     ForceRescan
 };
 
-enum class ParseStatus : uint8_t {
+// The serialized enum widths are intentional for on-disk compatibility.
+// NOLINTNEXTLINE(performance-enum-size)
+enum class ParseStatus : uint8_t
+{
     NotParsed = 0,
     ParsedClass,
     NoClass,
@@ -222,13 +249,19 @@ enum class ParseStatus : uint8_t {
     Malformed
 };
 
-enum class ScriptLanguage : uint8_t {
+// The serialized enum widths are intentional for on-disk compatibility.
+// NOLINTNEXTLINE(performance-enum-size)
+enum class ScriptLanguage : uint8_t
+{
     Unknown = 0,
     GDScript,
     CSharp
 };
 
-enum class DependencyKind : uint8_t {
+// The serialized enum widths are intentional for on-disk compatibility.
+// NOLINTNEXTLINE(performance-enum-size)
+enum class DependencyKind : uint8_t
+{
     PreloadPath = 0,
     LoadPath,
     ResourceLoaderLoadPath,
@@ -252,7 +285,8 @@ enum class DependencyKind : uint8_t {
     Unknown
 };
 
-struct ScanMetrics {
+struct ScanMetrics
+{
     int64_t total_wall_ms = 0;
     int64_t traversal_ms = 0;
     int64_t metadata_ms = 0;
@@ -325,10 +359,12 @@ struct ScanMetrics {
     std::string scan_result_status = "completed";
 };
 
-struct ScanOptions {
+// NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
+struct ScanOptions
+{
     int64_t project_id = 0;
     std::filesystem::path project_root;
-    const std::atomic_bool *cancel_requested = nullptr;
+    const std::atomic_bool* cancel_requested = nullptr;
     bool include_hidden = true;
     bool force_rescan = false;
     bool persist_to_database = true;
@@ -348,7 +384,8 @@ struct ScanOptions {
     std::vector<std::string> dirty_paths;
 };
 
-struct ScanResultSummary {
+struct ScanResultSummary
+{
     int64_t scan_run_id = 0;
     ScanGeneration scan_generation = 0;
     std::string status = "completed";
@@ -364,7 +401,9 @@ struct ScanResultSummary {
     int64_t total_wall_ms = 0;
 };
 
-struct ExistingEntrySnapshot {
+// NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
+struct ExistingEntrySnapshot
+{
     int64_t id = 0;
     EntryKind entry_kind = EntryKind::File;
     int64_t size_bytes = 0;
@@ -377,12 +416,19 @@ struct ExistingEntrySnapshot {
     ParseStatus parse_status = ParseStatus::NotParsed;
 };
 
-struct DirtyCheckResult {
+struct DirtyCheckResult
+{
     DirtyState state = DirtyState::Dirty;
     DirtyReason reason = DirtyReason::NewPath;
+
+    constexpr DirtyCheckResult() = default;
+    constexpr DirtyCheckResult(DirtyState state_value, DirtyReason reason_value) noexcept
+        : state(state_value), reason(reason_value)
+    {}
 };
 
-struct EntryFacts {
+struct EntryFacts
+{
     std::string_view project_relative_path;
     std::string_view project_relative_path_lower;
     std::string_view file_name;
@@ -392,21 +438,24 @@ struct EntryFacts {
     bool hidden = false;
 };
 
-class PathArena {
+// NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
+class PathArena
+{
 public:
     uint32_t append(std::string_view value);
-    std::string_view view(uint32_t offset, uint32_t length) const;
-    std::string string_at(uint32_t offset, uint32_t length) const;
+    [[nodiscard]] std::string_view view(uint32_t offset, uint32_t length) const;
+    [[nodiscard]] std::string string_at(uint32_t offset, uint32_t length) const;
     void reserve(size_t bytes);
     void clear();
-    size_t size() const;
-    size_t capacity() const;
+    [[nodiscard]] size_t size() const;
+    [[nodiscard]] size_t capacity() const;
 
 private:
-    std::vector<char> data_;
+    std::vector<char> m_data;
 };
 
-struct EntryRecord {
+struct EntryRecord
+{
     uint32_t path_offset = 0;
     uint32_t path_length = 0;
     uint32_t lower_path_offset = 0;
@@ -431,26 +480,27 @@ struct EntryRecord {
     DirtyState dirty_state = DirtyState::Dirty;
     DirtyReason dirty_reason = DirtyReason::NewPath;
 
-    bool is_hidden() const;
+    [[nodiscard]] bool is_hidden() const;
     void set_hidden(bool hidden);
-    bool has_platform_file_id() const;
+    [[nodiscard]] bool has_platform_file_id() const;
     void clear_platform_file_id();
 };
 
-class SkipPolicy {
+class SkipPolicy
+{
 public:
     SkipPolicy();
 
-    bool should_skip_normalized(std::string_view project_relative_path) const;
-    bool should_skip_external(std::string_view project_relative_path) const;
-    bool should_skip(std::string_view project_relative_path) const;
+    [[nodiscard]] bool should_skip_normalized(std::string_view project_relative_path) const;
+    [[nodiscard]] bool should_skip_external(std::string_view project_relative_path) const;
+    [[nodiscard]] bool should_skip(std::string_view project_relative_path) const;
 
     void add_prefix_normalized(std::string prefix);
-    void add_prefix_external(std::string prefix);
-    void add_prefix(std::string prefix);
+    void add_prefix_external(std::string_view prefix);
+    void add_prefix(std::string_view prefix);
 
 private:
-    std::vector<std::string> prefixes_;
+    std::vector<std::string> m_prefixes;
 };
 
 std::string normalize_project_path(std::string_view path);
@@ -460,40 +510,35 @@ std::string lower_ascii(std::string_view value);
 ExtensionId extension_id_from_extension(std::string_view extension);
 bool is_script_extension(std::string_view extension);
 ScriptLanguage language_from_extension(std::string_view extension);
-FileTypeId classify_entry_from_facts(const EntryFacts &facts);
-GodotTypeHint detect_godot_type_hint_from_facts(const EntryFacts &facts, FileTypeId file_type);
+FileTypeId classify_entry_from_facts(const EntryFacts& facts);
+GodotTypeHint detect_godot_type_hint_from_facts(const EntryFacts& facts, FileTypeId file_type);
 FileTypeId classify_entry(std::string_view project_relative_path, EntryKind kind);
 GodotTypeHint detect_godot_type_hint(std::string_view project_relative_path, FileTypeId file_type);
 TypeHintSource type_hint_source_for(GodotTypeHint hint);
-DirtyCheckResult detect_dirty_state(
-    EntryKind kind,
-    int64_t size_bytes,
-    int64_t modified_time_ns,
-    std::string_view platform_file_id,
-    const ExistingEntrySnapshot &existing,
-    bool force_rescan
-);
-DirtyCheckResult detect_dirty_state(
-    EntryKind kind,
-    int64_t size_bytes,
-    int64_t modified_time_ns,
-    std::string_view platform_file_id,
-    const std::optional<ExistingEntrySnapshot> &existing,
-    bool force_rescan
-);
-std::string platform_file_id_to_string(const EntryRecord &record);
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+DirtyCheckResult detect_dirty_state(EntryKind kind, int64_t size_bytes, int64_t modified_time_ns,
+                                    std::string_view platform_file_id,
+                                    const ExistingEntrySnapshot& existing, bool force_rescan);
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+DirtyCheckResult detect_dirty_state(EntryKind kind, int64_t size_bytes, int64_t modified_time_ns,
+                                    std::string_view platform_file_id,
+                                    const std::optional<ExistingEntrySnapshot>& existing,
+                                    bool force_rescan);
+std::string platform_file_id_to_string(const EntryRecord& record);
 bool is_builtin_node_type_hint(std::string_view type_name);
 bool is_builtin_resource_type_hint(std::string_view type_name);
 
-const char *to_string(EntryKind value);
-const char *to_string(ExtensionId value);
-const char *to_string(FileTypeId value);
-const char *to_string(GodotTypeHint value);
-const char *to_string(TypeHintSource value);
-const char *to_string(DirtyState value);
-const char *to_string(DirtyReason value);
-const char *to_string(ParseStatus value);
-const char *to_string(ScriptLanguage value);
-const char *to_string(DependencyKind value);
+const char* to_string(EntryKind value);
+const char* to_string(ExtensionId value);
+const char* to_string(FileTypeId value);
+const char* to_string(GodotTypeHint value);
+const char* to_string(TypeHintSource value);
+const char* to_string(DirtyState value);
+const char* to_string(DirtyReason value);
+const char* to_string(ParseStatus value);
+const char* to_string(ScriptLanguage value);
+const char* to_string(DependencyKind value);
 
 } // namespace gotool::project_scanner
+
+#endif // GOTOOL_PROJECT_SCANNER_NATIVE_SCAN_RULES_HPP

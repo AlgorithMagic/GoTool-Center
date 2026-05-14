@@ -20,6 +20,8 @@ NATIVE_TEST_FILES = [
     "tests/native/scanner_benchmark.cpp",
     "tests/native/schema_v2_tests.cpp",
     "tests/native/scanner_native_tests.cpp",
+    "tests/native/database_inventory_coverage_tests.cpp",
+    "tests/native/scan_rules_coverage_tests.cpp",
 ]
 
 FUZZ_SCRIPT_PARSER_SOURCES = [
@@ -446,29 +448,33 @@ if build_extension:
 if build_doctest:
     require_source_files(NATIVE_TEST_FILES)
 
-native_test_sources = (
-    NATIVE_TEST_FILES
-    + collect_native_testable_production_sources()
-)
+    native_test_sources = (
+        NATIVE_TEST_FILES
+        + collect_native_testable_production_sources()
+    )
 
-sqlite_test_env = env.Clone()
-configure_sqlite_c_flags(sqlite_test_env, platform)
+    sqlite_test_env = env.Clone()
+    configure_sqlite_c_flags(sqlite_test_env, platform)
 
-sqlite_test_object = sqlite_test_env.Object(
-    target=(object_dir / "sqlite3_native_tests").as_posix(),
-    source=SQLITE_SOURCE.as_posix(),
-)
+    sqlite_test_object = sqlite_test_env.Object(
+        target=(object_dir / "sqlite3_native_tests").as_posix(),
+        source=SQLITE_SOURCE.as_posix(),
+    )
 
-native_test_binary = env.Program(
-    target=native_test_target,
-    source=native_test_sources + sqlite_test_object,
-)
+    native_test_target = (
+        Path("build") / "tests" / platform / build_target / arch / "gotool_native_tests"
+    ).as_posix()
 
-default_targets.append(native_test_binary)
-compilation_database_inputs.append(native_test_binary)
+    native_test_binary = env.Program(
+        target=native_test_target,
+        source=native_test_sources + sqlite_test_object,
+    )
 
-env.Alias("doctest", native_test_binary)
-env.Alias("tests", native_test_binary)
+    default_targets.append(native_test_binary)
+    compilation_database_inputs.append(native_test_binary)
+
+    env.Alias("doctest", native_test_binary)
+    env.Alias("tests", native_test_binary)
 
 if build_fuzz:
     require_source_files(FUZZ_SCRIPT_PARSER_SOURCES)
