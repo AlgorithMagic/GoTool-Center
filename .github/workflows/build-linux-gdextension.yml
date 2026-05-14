@@ -4,122 +4,230 @@ on:
   workflow_dispatch:
 
   push:
-    branches:
-      - main
+    branches: [main]
     paths:
       - "SConstruct"
       - "SCsub"
       - "src/**"
+      - "doc_classes/**"
       - "godot-cpp"
       - "godot-cpp/**"
       - "third-party/**"
-      - "addons/GoToolCenter/**"
       - "project/addons/GoToolCenter/**"
       - ".gitmodules"
       - ".github/workflows/build-gdextension.yml"
 
   pull_request:
+    branches: [main]
     paths:
       - "SConstruct"
       - "SCsub"
       - "src/**"
+      - "doc_classes/**"
       - "godot-cpp"
       - "godot-cpp/**"
       - "third-party/**"
-      - "addons/GoToolCenter/**"
       - "project/addons/GoToolCenter/**"
       - ".gitmodules"
       - ".github/workflows/build-gdextension.yml"
 
-permissions:
-  contents: read
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
   build:
     name: Build ${{ matrix.platform }} ${{ matrix.arch }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+
+    permissions:
+      contents: read
 
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             platform: linux
             arch: x86_64
             artifact_name: gotool-center-linux-x86_64
 
-          - os: windows-latest
+          - os: windows-2025
             platform: windows
             arch: x86_64
             artifact_name: gotool-center-windows-x86_64
 
-          - os: macos-latest
+          - os: macos-15
             platform: macos
             arch: universal
             artifact_name: gotool-center-macos-universal
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           submodules: recursive
-          fetch-depth: 0
-
-      - name: Verify required files
-        run: |
-          python -c "from pathlib import Path; required = ['godot-cpp/SConstruct', 'third-party/godot/extension_api.json', 'third-party/sqlite3/sqlite3.c', 'SConstruct']; missing = [p for p in required if not Path(p).is_file()]; print('Missing files:', missing); raise SystemExit(1 if missing else 0)"
+          fetch-depth: 1
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: "3.12"
 
       - name: Install SCons
         run: |
+          set -euo pipefail
+
           python -m pip install --upgrade pip
-          python -m pip install scons
+          python -m pip install "scons>=4.8,<5"
+
+          python --version
           scons --version
+
+      - name: Verify required files
+        run: |
+          set -euo pipefail
+
+          python - <<'PY'
+          from pathlib import Path
+
+          required = [
+              "SConstruct",
+              "godot-cpp/SConstruct",
+              "third-party/godot/extension_api.json",
+              "third-party/sqlite3/sqlite3.c",
+          ]
+
+          missing = [path for path in required if not Path(path).is_file()]
+
+          if missing:
+              print("Missing required files:")
+              for path in missing:
+                  print(f"  - {path}")
+              raise SystemExit(1)
+
+          print("All required build inputs are present.")
+          PY
 
       - name: Print build environment
         run: |
+          set -euo pipefail
+
           python --version
           scons --version
           git submodule status --recursive
 
+          if command -v clang++ >/dev/null 2>&1; then
+            clang++ --version
+          fi
+
+          if command -v g++ >/dev/null 2>&1; then
+            g++ --version
+          fi
+
+          if command -v cl >/dev/null 2>&1; then
+            cl || true
+          fi
+
       - name: Build debug library
         run: |
-          scons platform=${{ matrix.platform }} target=template_debug arch=${{ matrix.arch }} custom_api_file=third-party/godot/extension_api.json generate_bindings=yes -j2
+          set -euo pipefail
+
+          scons \
+            platform=${{ matrix.platform }} \
+            target=template_debug \
+            arch=${{ matrix.arch }} \
+            extension=1 \
+            doctest=0 \
+            fuzz=0 \
+            coverage=0 \
+            sanitizer=none \
+            compiledb=0 \
+            custom_api_file=third-party/godot/extension_api.json \
+            generate_bindings=yes \
+            -j2
 
       - name: Build release library
         run: |
-          scons platform=${{ matrix.platform }} target=template_release arch=${{ matrix.arch }} custom_api_file=third-party/godot/extension_api.json generate_bindings=yes -j2
+          set -euo pipefail
+
+          scons \
+            platform=${{ matrix.platform }} \
+            target=template_release \
+            arch=${{ matrix.arch }} \
+            extension=1 \
+            doctest=0 \
+            fuzz=0 \
+            coverage=0 \
+            sanitizer=none \
+            compiledb=0 \
+            custom_api_file=third-party/godot/extension_api.json \
+            generate_bindings=yes \
+            -j2
 
       - name: List native library outputs
         run: |
-          python -c "from pathlib import Path; root = Path('project/addons/GoToolCenter/bin'); print('Output directory:', root.resolve()); [print(p.as_posix()) for p in sorted(root.glob('*'))]"
+          set -euo pipefail
+
+          python - <<'PY'
+          from pathlib import Path
+
+          root = Path("project/addons/GoToolCenter/bin")
+          print(f"Output directory: {root.resolve()}")
+
+          if not root.is_dir():
+              print("Output directory does not exist.")
+              raise SystemExit(1)
+
+          outputs = sorted(path for path in root.glob("*") if path.is_file())
+
+          if not outputs:
+              print("No native library outputs were found.")
+              raise SystemExit(1)
+
+          for path in outputs:
+              print(path.as_posix())
+          PY
 
       - name: Upload platform artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ matrix.artifact_name }}
           path: |
-            project/addons/GoToolCenter/bin/**
+            project/addons/GoToolCenter/bin/*.dll
+            project/addons/GoToolCenter/bin/*.so
+            project/addons/GoToolCenter/bin/*.dylib
           if-no-files-found: error
+          retention-days: 14
 
   package:
     name: Package all native libraries
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     needs:
       - build
 
+    permissions:
+      contents: read
+
     steps:
       - name: Download all platform artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: artifacts
 
       - name: Create combined addon bin folder
         run: |
+          set -euo pipefail
+
           mkdir -p package/addons/GoToolCenter/bin
 
           find artifacts -type f \( \
@@ -128,11 +236,24 @@ jobs:
             -name "*.dylib" \
           \) -exec cp {} package/addons/GoToolCenter/bin/ \;
 
-          find package -type f -print
+          echo "Packaged native libraries:"
+          find package/addons/GoToolCenter/bin -type f -print | sort
+
+          library_count="$(find package/addons/GoToolCenter/bin -type f \( \
+            -name "*.dll" -o \
+            -name "*.so" -o \
+            -name "*.dylib" \
+          \) | wc -l)"
+
+          if [ "$library_count" -eq 0 ]; then
+            echo "No native libraries were packaged."
+            exit 1
+          fi
 
       - name: Upload combined native library package
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: gotool-center-all-platforms
           path: package/**
           if-no-files-found: error
+          retention-days: 14

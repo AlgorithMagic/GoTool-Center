@@ -1,133 +1,181 @@
 name: Native Quality Gates
 
 on:
+  workflow_dispatch:
+
   push:
-    branches: ["main"]
+    branches: [main]
+    paths:
+      - "SConstruct"
+      - "SCsub"
+      - "src/**"
+      - "tests/**"
+      - "third-party/**"
+      - "godot-cpp"
+      - "godot-cpp/**"
+      - ".gitmodules"
+      - ".github/workflows/native-quality-gates.yml"
+
   pull_request:
-    branches: ["main"]
+    branches: [main]
+    paths:
+      - "SConstruct"
+      - "SCsub"
+      - "src/**"
+      - "tests/**"
+      - "third-party/**"
+      - "godot-cpp"
+      - "godot-cpp/**"
+      - ".gitmodules"
+      - ".github/workflows/native-quality-gates.yml"
 
 permissions: {}
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
 jobs:
-  native-tests:
-    name: Native Doctest
-    runs-on: ubuntu-latest
+  native-diagnostics:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ matrix.timeout_minutes }}
 
     permissions:
       contents: read
 
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Native Doctest
+            timeout_minutes: 15
+            scons_args: >-
+              extension=0
+              doctest=1
+              compiledb=0
+            run_command: ./build/tests/linux/template_debug/x86_64/gotool_native_tests
+            asan_options: ""
+            ubsan_options: ""
+            tsan_options: ""
+
+          - name: ASan + UBSan
+            timeout_minutes: 20
+            scons_args: >-
+              extension=0
+              doctest=1
+              sanitizer=asan_ubsan
+              use_llvm=yes
+              compiledb=0
+            run_command: ./build/tests/linux/template_debug/x86_64/gotool_native_tests
+            asan_options: detect_leaks=1:strict_init_order=1:check_initialization_order=1:abort_on_error=1
+            ubsan_options: print_stacktrace=1:halt_on_error=1
+            tsan_options: ""
+
+          - name: TSan
+            timeout_minutes: 25
+            scons_args: >-
+              extension=0
+              doctest=1
+              sanitizer=tsan
+              use_llvm=yes
+              compiledb=0
+            run_command: ./build/tests/linux/template_debug/x86_64/gotool_native_tests
+            asan_options: ""
+            ubsan_options: ""
+            tsan_options: halt_on_error=1:history_size=7:second_deadlock_stack=1
+
+          - name: Native Script Parser Fuzz Smoke
+            timeout_minutes: 15
+            scons_args: >-
+              extension=0
+              doctest=0
+              fuzz=1
+              compiledb=0
+            run_command: ./build/fuzz/linux/template_debug/x86_64/native_script_parser_fuzz -runs=256 -max_len=4096 -timeout=10
+            asan_options: detect_leaks=1:abort_on_error=1
+            ubsan_options: print_stacktrace=1:halt_on_error=1
+            tsan_options: ""
+
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           submodules: recursive
+          fetch-depth: 1
           persist-credentials: false
 
-      - name: Install dependencies
+      - name: Install native build dependencies
         run: |
+          set -euo pipefail
+
           sudo apt-get update
-          sudo apt-get install -y \
+          sudo apt-get install -y --no-install-recommends \
             build-essential \
             clang \
             lld \
             python3 \
-            python3-pip \
-            scons
+            python3-pip
 
-      - name: Build native doctest executable
+          python3 -m pip install --user --upgrade pip
+          python3 -m pip install --user "scons>=4.8,<5"
+
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+          clang++ --version
+          "$HOME/.local/bin/scons" --version
+
+      - name: Verify required repository inputs
         run: |
-          scons platform=linux target=template_debug arch=x86_64 doctest=1 compiledb=0
+          set -euo pipefail
 
-      - name: Run native doctest executable
+          python3 - <<'PY'
+          from pathlib import Path
+
+          required = [
+              "godot-cpp/SConstruct",
+              "third-party/godot/extension_api.json",
+              "third-party/sqlite3/sqlite3.c",
+              "SConstruct",
+          ]
+
+          missing = [path for path in required if not Path(path).is_file()]
+
+          if missing:
+              print("Missing required files:")
+              for path in missing:
+                  print(f"  - {path}")
+              raise SystemExit(1)
+          PY
+
+      - name: Build ${{ matrix.name }}
         run: |
-          ./build/tests/linux/template_debug/x86_64/gotool_native_tests
+          set -euo pipefail
 
-  asan-ubsan:
-    name: ASan + UBSan
-    runs-on: ubuntu-latest
-
-    permissions:
-      contents: read
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          submodules: recursive
-          persist-credentials: false
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            clang \
-            lld \
-            python3 \
-            scons
-
-      - name: Build sanitizer test executable
-        run: |
           scons \
             platform=linux \
             target=template_debug \
             arch=x86_64 \
-            doctest=1 \
-            sanitizer=asan_ubsan \
-            use_llvm=yes \
-            compiledb=0
+            ${{ matrix.scons_args }}
 
-      - name: Run ASan/UBSan tests
+      - name: Run ${{ matrix.name }}
         run: |
-          ./build/tests/linux/template_debug/x86_64/gotool_native_tests
+          set -euo pipefail
+
+          ${{ matrix.run_command }}
         env:
-          ASAN_OPTIONS: detect_leaks=1:strict_init_order=1:check_initialization_order=1:abort_on_error=1
-          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
-
-  tsan:
-    name: TSan
-    runs-on: ubuntu-latest
-
-    permissions:
-      contents: read
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          submodules: recursive
-          persist-credentials: false
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            clang \
-            lld \
-            python3 \
-            scons
-
-      - name: Build TSan test executable
-        run: |
-          scons \
-            platform=linux \
-            target=template_debug \
-            arch=x86_64 \
-            doctest=1 \
-            sanitizer=tsan \
-            use_llvm=yes \
-            compiledb=0
-
-      - name: Run TSan tests
-        run: |
-          ./build/tests/linux/template_debug/x86_64/gotool_native_tests
-        env:
-          TSAN_OPTIONS: halt_on_error=1:history_size=7
+          ASAN_OPTIONS: ${{ matrix.asan_options }}
+          UBSAN_OPTIONS: ${{ matrix.ubsan_options }}
+          TSAN_OPTIONS: ${{ matrix.tsan_options }}
 
   coverage:
     name: Coverage
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
 
     permissions:
       contents: read
@@ -135,64 +183,117 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           submodules: recursive
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Install dependencies
+      - name: Install coverage dependencies
         run: |
+          set -euo pipefail
+
           sudo apt-get update
-          sudo apt-get install -y \
+          sudo apt-get install -y --no-install-recommends \
             build-essential \
             gcc \
             g++ \
             python3 \
-            python3-pip \
-            scons \
-            gcovr
-          python3 -m pip install --user diff-cover
+            python3-pip
+
+          python3 -m pip install --user --upgrade pip
+          python3 -m pip install --user \
+            "scons>=4.8,<5" \
+            "gcovr>=8,<9" \
+            "diff-cover>=9,<10"
+
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+          gcc --version
+          g++ --version
+          "$HOME/.local/bin/scons" --version
+          "$HOME/.local/bin/gcovr" --version
+          "$HOME/.local/bin/diff-cover" --version
+
+      - name: Verify required repository inputs
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          required = [
+              "godot-cpp/SConstruct",
+              "third-party/godot/extension_api.json",
+              "third-party/sqlite3/sqlite3.c",
+              "SConstruct",
+          ]
+
+          missing = [path for path in required if not Path(path).is_file()]
+
+          if missing:
+              print("Missing required files:")
+              for path in missing:
+                  print(f"  - {path}")
+              raise SystemExit(1)
+          PY
 
       - name: Build coverage executable
         run: |
+          set -euo pipefail
+
           scons \
             platform=linux \
             target=template_debug \
             arch=x86_64 \
+            extension=0 \
             doctest=1 \
             coverage=1 \
             compiledb=0
 
       - name: Run native tests
         run: |
+          set -euo pipefail
+
           ./build/tests/linux/template_debug/x86_64/gotool_native_tests
 
-      - name: Enforce global coverage
+      - name: Generate coverage reports
         run: |
+          set -euo pipefail
+
           gcovr \
             --root . \
             --exclude 'godot-cpp/.*' \
             --exclude 'third-party/.*' \
             --exclude 'build/.*' \
             --exclude 'tests/.*' \
-            --fail-under-line 85 \
-            --fail-under-branch 75
-
-      - name: Generate Cobertura coverage XML
-        run: |
-          gcovr \
-            --root . \
+            --exclude 'src/gen/.*' \
+            --exclude 'src/register_types\.cpp' \
             --xml-pretty \
             --output coverage.xml \
+            --html-details \
+            --output coverage.html
+
+      - name: Enforce global coverage
+        run: |
+          set -euo pipefail
+
+          gcovr \
+            --root . \
             --exclude 'godot-cpp/.*' \
             --exclude 'third-party/.*' \
             --exclude 'build/.*' \
-            --exclude 'tests/.*'
+            --exclude 'tests/.*' \
+            --exclude 'src/gen/.*' \
+            --exclude 'src/register_types\.cpp' \
+            --fail-under-line 85 \
+            --fail-under-branch 75
 
       - name: Enforce changed-code coverage
         if: github.event_name == 'pull_request'
         run: |
-          python3 -m diff_cover.diff_cover_tool coverage.xml \
+          set -euo pipefail
+
+          diff-cover coverage.xml \
             --compare-branch origin/main \
             --fail-under 90

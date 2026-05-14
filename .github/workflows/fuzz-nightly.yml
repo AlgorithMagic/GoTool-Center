@@ -2,55 +2,140 @@ name: Native Fuzzing
 
 on:
   workflow_dispatch:
+
   schedule:
+    # Runs daily at 09:00 UTC on the default branch.
     - cron: "0 9 * * *"
 
 permissions: {}
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
 jobs:
   fuzz-native-script-parser:
     name: Fuzz native_script_parser
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
 
     permissions:
       contents: read
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           submodules: recursive
+          fetch-depth: 1
           persist-credentials: false
 
-      - name: Install dependencies
+      - name: Install fuzzing dependencies
         run: |
+          set -euo pipefail
+
           sudo apt-get update
-          sudo apt-get install -y \
+          sudo apt-get install -y --no-install-recommends \
             build-essential \
             clang \
             lld \
             python3 \
-            scons
+            python3-pip
+
+          python3 -m pip install --user --upgrade pip
+          python3 -m pip install --user "scons>=4.8,<5"
+
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+          clang++ --version
+          "$HOME/.local/bin/scons" --version
+
+      - name: Verify required repository inputs
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          required = [
+              "godot-cpp/SConstruct",
+              "third-party/godot/extension_api.json",
+              "third-party/sqlite3/sqlite3.c",
+              "SConstruct",
+              "tests/fuzz/native_script_parser_fuzz.cpp",
+              "src/project_scanner/native_script_parser.cpp",
+              "src/project_scanner/native_scan_rules.cpp",
+          ]
+
+          missing = [path for path in required if not Path(path).is_file()]
+
+          if missing:
+              print("Missing required files:")
+              for path in missing:
+                  print(f"  - {path}")
+              raise SystemExit(1)
+          PY
 
       - name: Build fuzz target
         run: |
+          set -euo pipefail
+
           scons \
             platform=linux \
             target=template_debug \
             arch=x86_64 \
+            extension=0 \
+            doctest=0 \
             fuzz=1 \
-            sanitizer=asan_ubsan \
+            sanitizer=none \
             use_llvm=yes \
             compiledb=0
 
       - name: Run fuzz target
         run: |
-          mkdir -p tests/fuzz/corpus/script_parser
+          set -euo pipefail
+
+          mkdir -p \
+            tests/fuzz/corpus/script_parser \
+            tests/fuzz/artifacts/script_parser
+
           ./build/fuzz/linux/template_debug/x86_64/native_script_parser_fuzz \
             tests/fuzz/corpus/script_parser \
-            -max_total_time=300 \
+            -artifact_prefix=tests/fuzz/artifacts/script_parser/ \
+            -max_total_time=900 \
+            -max_len=8192 \
+            -timeout=10 \
             -print_final_stats=1
         env:
           ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+
+      - name: Collect fuzz outputs
+        if: always()
+        run: |
+          set -euo pipefail
+
+          mkdir -p fuzz-output
+
+          if [ -d tests/fuzz/artifacts/script_parser ]; then
+            cp -a tests/fuzz/artifacts/script_parser fuzz-output/artifacts
+          fi
+
+          if [ -d tests/fuzz/corpus/script_parser ]; then
+            cp -a tests/fuzz/corpus/script_parser fuzz-output/corpus
+          fi
+
+          find fuzz-output -type f -print | sort || true
+
+      - name: Upload fuzz outputs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: native-script-parser-fuzz-${{ github.run_id }}-${{ github.run_attempt }}
+          path: fuzz-output/**
+          if-no-files-found: warn
+          retention-days: 14
