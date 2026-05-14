@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import shlex
 from pathlib import Path
 from SCons.Script import ARGUMENTS, Default, SConscript
 
@@ -95,7 +96,34 @@ def configure_sqlite_c_flags(build_env, active_platform: str) -> None:
 
 def remove_compiler_flag(build_env, variable_name: str, flag: str) -> None:
     current_flags = build_env.get(variable_name, [])
-    build_env[variable_name] = [value for value in current_flags if str(value) != flag]
+
+    if isinstance(current_flags, str):
+        values = [current_flags]
+    else:
+        values = list(current_flags)
+
+    filtered_values = []
+    for value in values:
+        value_text = str(value)
+
+        if value_text == flag:
+            continue
+
+        if flag in shlex.split(value_text):
+            remaining = [piece for piece in shlex.split(value_text) if piece != flag]
+
+            if remaining:
+                filtered_values.append(" ".join(remaining))
+            continue
+
+        filtered_values.append(value)
+
+    build_env[variable_name] = filtered_values
+
+
+def remove_gnu_unique_for_clang(build_env) -> None:
+    for variable_name in ("CFLAGS", "CCFLAGS", "CXXFLAGS"):
+        remove_compiler_flag(build_env, variable_name, "-fno-gnu-unique")
 
 
 def configure_native_diagnostic_flags(
@@ -115,7 +143,7 @@ def configure_native_diagnostic_flags(
 
     # godot-cpp enables this GCC-specific flag for hot reload in template_debug.
     # Sanitizer builds force clang, which may reject it.
-    remove_compiler_flag(build_env, "CXXFLAGS", "-fno-gnu-unique")
+    remove_gnu_unique_for_clang(build_env)
 
     if active_sanitizer == "asan_ubsan":
         build_env.Replace(CXX="clang++")
@@ -258,7 +286,7 @@ def configure_libfuzzer_flags(build_env, active_platform: str) -> None:
         raise RuntimeError("fuzz=1 is currently supported only on Linux/Clang")
 
     # Keep clang-compatible flags in fuzz-only builds as well.
-    remove_compiler_flag(build_env, "CXXFLAGS", "-fno-gnu-unique")
+    remove_gnu_unique_for_clang(build_env)
 
     build_env.Replace(CXX="clang++")
     build_env.Replace(CC="clang")

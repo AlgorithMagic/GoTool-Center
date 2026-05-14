@@ -41,6 +41,7 @@ jobs:
             arch=x86_64 \
             fuzz=1 \
             sanitizer=asan_ubsan \
+            use_llvm=yes \
             compiledb=0
 
       - name: Run fuzz target

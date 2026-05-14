@@ -74,6 +74,7 @@ jobs:
             arch=x86_64 \
             doctest=1 \
             sanitizer=asan_ubsan \
+            use_llvm=yes \
             compiledb=0
 
       - name: Run ASan/UBSan tests
@@ -115,6 +116,7 @@ jobs:
             arch=x86_64 \
             doctest=1 \
             sanitizer=tsan \
+            use_llvm=yes \
             compiledb=0
 
       - name: Run TSan tests
