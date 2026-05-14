@@ -6486,6 +6486,30 @@
         "output": "src\\project_context\\gotool_project_context.windows.template_debug.x86_64.obj"
     },
     {
+        "command": "cl /Fosrc\\project_context\\gotool_project_context_autoload.windows.template_debug.x86_64.obj /c src\\project_context\\gotool_project_context_autoload.cpp /TP /std:c++20 /permissive- /EHsc /nologo /utf-8 /MT /O2 /DTYPED_METHOD_BIND /DNOMINMAX /DWINDOWS_ENABLED /D_HAS_EXCEPTIONS=0 /DTHREADS_ENABLED /DHOT_RELOAD_ENABLED /DDEBUG_ENABLED /DNDEBUG /DGDEXTENSION /DSQLITE_THREADSAFE=1 /DSQLITE_OMIT_LOAD_EXTENSION /Igodot-cpp\\include /Igodot-cpp\\gen\\include /Isrc /Ithird-party\\sqlite3 /Ithird-party\\doctest",
+        "directory": "Y:\\GoTool-Center",
+        "file": "src\\project_context\\gotool_project_context_autoload.cpp",
+        "output": "src\\project_context\\gotool_project_context_autoload.windows.template_debug.x86_64.obj"
+    },
+    {
+        "command": "cl /Fosrc\\project_context\\gotool_project_context_materializers.windows.template_debug.x86_64.obj /c src\\project_context\\gotool_project_context_materializers.cpp /TP /std:c++20 /permissive- /EHsc /nologo /utf-8 /MT /O2 /DTYPED_METHOD_BIND /DNOMINMAX /DWINDOWS_ENABLED /D_HAS_EXCEPTIONS=0 /DTHREADS_ENABLED /DHOT_RELOAD_ENABLED /DDEBUG_ENABLED /DNDEBUG /DGDEXTENSION /DSQLITE_THREADSAFE=1 /DSQLITE_OMIT_LOAD_EXTENSION /Igodot-cpp\\include /Igodot-cpp\\gen\\include /Isrc /Ithird-party\\sqlite3 /Ithird-party\\doctest",
+        "directory": "Y:\\GoTool-Center",
+        "file": "src\\project_context\\gotool_project_context_materializers.cpp",
+        "output": "src\\project_context\\gotool_project_context_materializers.windows.template_debug.x86_64.obj"
+    },
+    {
+        "command": "cl /Fosrc\\project_context\\gotool_project_context_metrics.windows.template_debug.x86_64.obj /c src\\project_context\\gotool_project_context_metrics.cpp /TP /std:c++20 /permissive- /EHsc /nologo /utf-8 /MT /O2 /DTYPED_METHOD_BIND /DNOMINMAX /DWINDOWS_ENABLED /D_HAS_EXCEPTIONS=0 /DTHREADS_ENABLED /DHOT_RELOAD_ENABLED /DDEBUG_ENABLED /DNDEBUG /DGDEXTENSION /DSQLITE_THREADSAFE=1 /DSQLITE_OMIT_LOAD_EXTENSION /Igodot-cpp\\include /Igodot-cpp\\gen\\include /Isrc /Ithird-party\\sqlite3 /Ithird-party\\doctest",
+        "directory": "Y:\\GoTool-Center",
+        "file": "src\\project_context\\gotool_project_context_metrics.cpp",
+        "output": "src\\project_context\\gotool_project_context_metrics.windows.template_debug.x86_64.obj"
+    },
+    {
+        "command": "cl /Fosrc\\project_context\\gotool_project_context_watcher.windows.template_debug.x86_64.obj /c src\\project_context\\gotool_project_context_watcher.cpp /TP /std:c++20 /permissive- /EHsc /nologo /utf-8 /MT /O2 /DTYPED_METHOD_BIND /DNOMINMAX /DWINDOWS_ENABLED /D_HAS_EXCEPTIONS=0 /DTHREADS_ENABLED /DHOT_RELOAD_ENABLED /DDEBUG_ENABLED /DNDEBUG /DGDEXTENSION /DSQLITE_THREADSAFE=1 /DSQLITE_OMIT_LOAD_EXTENSION /Igodot-cpp\\include /Igodot-cpp\\gen\\include /Isrc /Ithird-party\\sqlite3 /Ithird-party\\doctest",
+        "directory": "Y:\\GoTool-Center",
+        "file": "src\\project_context\\gotool_project_context_watcher.cpp",
+        "output": "src\\project_context\\gotool_project_context_watcher.windows.template_debug.x86_64.obj"
+    },
+    {
         "command": "cl /Fosrc\\project_scanner\\file_watcher.windows.template_debug.x86_64.obj /c src\\project_scanner\\file_watcher.cpp /TP /std:c++20 /permissive- /EHsc /nologo /utf-8 /MT /O2 /DTYPED_METHOD_BIND /DNOMINMAX /DWINDOWS_ENABLED /D_HAS_EXCEPTIONS=0 /DTHREADS_ENABLED /DHOT_RELOAD_ENABLED /DDEBUG_ENABLED /DNDEBUG /DGDEXTENSION /DSQLITE_THREADSAFE=1 /DSQLITE_OMIT_LOAD_EXTENSION /Igodot-cpp\\include /Igodot-cpp\\gen\\include /Isrc /Ithird-party\\sqlite3 /Ithird-party\\doctest",
         "directory": "Y:\\GoTool-Center",
         "file": "src\\project_scanner\\file_watcher.cpp",
@@ -6532,5 +6556,149 @@
         "directory": "Y:\\GoTool-Center",
         "file": "src\\gen\\doc_data.gen.cpp",
         "output": "src\\gen\\doc_data.gen.windows.template_debug.x86_64.obj"
+    },
+    {
+        "command": "cl /Fotests\\native\\test_main.windows.template_debug.x86_64.obj /c tests\\native\\test_main.cpp /TP /std:c++20 /permissive- /EHsc /nologo /utf-8 /MT /O2 /DTYPED_METHOD_BIND /DNOMINMAX /DWINDOWS_ENABLED /D_HAS_EXCEPTIONS=0 /DTHREADS_ENABLED /DHOT_RELOAD_ENABLED /DDEBUG_ENABLED /DNDEBUG /DGDEXTENSION /DSQLITE_THREADSAFE=1 /DSQLITE_OMIT_LOAD_EXTENSION /Igodot-cpp\\include /Igodot-cpp\\gen\\include /Isrc /Ithird-party\\sqlite3 /Ithird-party\\doctest",
+        "directory": "Y:\\GoTool-Center",
+        "file": "tests\\native\\test_main.cpp",
+        "output": "tests\\native\\test_main.windows.template_debug.x86_64.obj"
+    },
+    {
+        "command": "cl /Fotests\\native\\test_main.windows.template_debug.x86_64.obj /c tests\\native\\test_main.cpp /TP /std:c++20 /permissive- /EHsc /nologo /utf-8 /MT /O2 /DTYPED_METHOD_BIND /DNOMINMAX /DWINDOWS_ENABLED /D_HAS_EXCEPTIONS=0 /DTHREADS_ENABLED /DHOT_RELOAD_ENABLED /DDEBUG_ENABLED /DNDEBUG /DGDEXTENSION /DSQLITE_THREADSAFE=1 /DSQLITE_OMIT_LOAD_EXTENSION /Igodot-cpp\\include /Igodot-cpp\\gen\\include /Isrc /Ithird-party\\sqlite3 /Ithird-party\\doctest",
+        "directory": "Y:\\GoTool-Center",
+        "file": "tests\\native\\test_main.cpp",
+        "output": "tests\\native\\test_main.windows.template_debug.x86_64.obj"
+    },
+    {
+        "command": "cl /Fotests\\native\\scanner_benchmark.windows.template_debug.x86_64.obj /c tests\\native\\scanner_benchmark.cpp /TP /std:c++20 /permissive- /EHsc /nologo /utf-8 /MT /O2 /DTYPED_METHOD_BIND /DNOMINMAX /DWINDOWS_ENABLED /D_HAS_EXCEPTIONS=0 /DTHREADS_ENABLED /DHOT_RELOAD_ENABLED /DDEBUG_ENABLED /DNDEBUG /DGDEXTENSION /DSQLITE_THREADSAFE=1 /DSQLITE_OMIT_LOAD_EXTENSION /Igodot-cpp\\include /Igodot-cpp\\gen\\include /Isrc /Ithird-party\\sqlite3 /Ithird-party\\doctest",
+        "directory": "Y:\\GoTool-Center",
+        "file": "tests\\native\\scanner_benchmark.cpp",
+        "output": "tests\\native\\scanner_benchmark.windows.template_debug.x86_64.obj"
+    },
+    {
+        "command": "cl /Fotests\\native\\scanner_benchmark.windows.template_debug.x86_64.obj /c tests\\native\\scanner_benchmark.cpp /TP /std:c++20 /permissive- /EHsc /nologo /utf-8 /MT /O2 /DTYPED_METHOD_BIND /DNOMINMAX /DWINDOWS_ENABLED /D_HAS_EXCEPTIONS=0 /DTHREADS_ENABLED /DHOT_RELOAD_ENABLED /DDEBUG_ENABLED /DNDEBUG /DGDEXTENSION /DSQLITE_THREADSAFE=1 /DSQLITE_OMIT_LOAD_EXTENSION /Igodot-cpp\\include /Igodot-cpp\\gen\\include /Isrc /Ithird-party\\sqlite3 /Ithird-party\\doctest",
+        "directory": "Y:\\GoTool-Center",
+        "file": "tests\\native\\scanner_benchmark.cpp",
+        "output": "tests\\native\\scanner_benchmark.windows.template_debug.x86_64.obj"
+    },
+    {
+        "command": "cl /Fotests\\native\\schema_v2_tests.windows.template_debug.x86_64.obj /c tests\\native\\schema_v2_tests.cpp /TP /std:c++20 /permissive- /EHsc /nologo /utf-8 /MT /O2 /DTYPED_METHOD_BIND /DNOMINMAX /DWINDOWS_ENABLED /D_HAS_EXCEPTIONS=0 /DTHREADS_ENABLED /DHOT_RELOAD_ENABLED /DDEBUG_ENABLED /DNDEBUG /DGDEXTENSION /DSQLITE_THREADSAFE=1 /DSQLITE_OMIT_LOAD_EXTENSION /Igodot-cpp\\include /Igodot-cpp\\gen\\include /Isrc /Ithird-party\\sqlite3 /Ithird-party\\doctest",
+        "directory": "Y:\\GoTool-Center",
+        "file": "tests\\native\\schema_v2_tests.cpp",
+        "output": "tests\\native\\schema_v2_tests.windows.template_debug.x86_64.obj"
+    },
+    {
+        "command": "cl /Fotests\\native\\schema_v2_tests.windows.template_debug.x86_64.obj /c tests\\native\\schema_v2_tests.cpp /TP /std:c++20 /permissive- /EHsc /nologo /utf-8 /MT /O2 /DTYPED_METHOD_BIND /DNOMINMAX /DWINDOWS_ENABLED /D_HAS_EXCEPTIONS=0 /DTHREADS_ENABLED /DHOT_RELOAD_ENABLED /DDEBUG_ENABLED /DNDEBUG /DGDEXTENSION /DSQLITE_THREADSAFE=1 /DSQLITE_OMIT_LOAD_EXTENSION /Igodot-cpp\\include /Igodot-cpp\\gen\\include /Isrc /Ithird-party\\sqlite3 /Ithird-party\\doctest",
+        "directory": "Y:\\GoTool-Center",
+        "file": "tests\\native\\schema_v2_tests.cpp",
+        "output": "tests\\native\\schema_v2_tests.windows.template_debug.x86_64.obj"
+    },
+    {
+        "command": "cl /Fotests\\native\\scanner_native_tests.windows.template_debug.x86_64.obj /c tests\\native\\scanner_native_tests.cpp /TP /std:c++20 /permissive- /EHsc /nologo /utf-8 /MT /O2 /DTYPED_METHOD_BIND /DNOMINMAX /DWINDOWS_ENABLED /D_HAS_EXCEPTIONS=0 /DTHREADS_ENABLED /DHOT_RELOAD_ENABLED /DDEBUG_ENABLED /DNDEBUG /DGDEXTENSION /DSQLITE_THREADSAFE=1 /DSQLITE_OMIT_LOAD_EXTENSION /Igodot-cpp\\include /Igodot-cpp\\gen\\include /Isrc /Ithird-party\\sqlite3 /Ithird-party\\doctest",
+        "directory": "Y:\\GoTool-Center",
+        "file": "tests\\native\\scanner_native_tests.cpp",
+        "output": "tests\\native\\scanner_native_tests.windows.template_debug.x86_64.obj"
+    },
+    {
+        "command": "cl /Fotests\\native\\scanner_native_tests.windows.template_debug.x86_64.obj /c tests\\native\\scanner_native_tests.cpp /TP /std:c++20 /permissive- /EHsc /nologo /utf-8 /MT /O2 /DTYPED_METHOD_BIND /DNOMINMAX /DWINDOWS_ENABLED /D_HAS_EXCEPTIONS=0 /DTHREADS_ENABLED /DHOT_RELOAD_ENABLED /DDEBUG_ENABLED /DNDEBUG /DGDEXTENSION /DSQLITE_THREADSAFE=1 /DSQLITE_OMIT_LOAD_EXTENSION /Igodot-cpp\\include /Igodot-cpp\\gen\\include /Isrc /Ithird-party\\sqlite3 /Ithird-party\\doctest",
+        "directory": "Y:\\GoTool-Center",
+        "file": "tests\\native\\scanner_native_tests.cpp",
+        "output": "tests\\native\\scanner_native_tests.windows.template_debug.x86_64.obj"
+    },
+    {
+        "command": "cl /Fosrc\\database\\gotool_database.windows.template_debug.x86_64.obj /c src\\database\\gotool_database.cpp /TP /std:c++20 /permissive- /EHsc /nologo /utf-8 /MT /O2 /DTYPED_METHOD_BIND /DNOMINMAX /DWINDOWS_ENABLED /D_HAS_EXCEPTIONS=0 /DTHREADS_ENABLED /DHOT_RELOAD_ENABLED /DDEBUG_ENABLED /DNDEBUG /DGDEXTENSION /DSQLITE_THREADSAFE=1 /DSQLITE_OMIT_LOAD_EXTENSION /Igodot-cpp\\include /Igodot-cpp\\gen\\include /Isrc /Ithird-party\\sqlite3 /Ithird-party\\doctest",
+        "directory": "Y:\\GoTool-Center",
+        "file": "src\\database\\gotool_database.cpp",
+        "output": "src\\database\\gotool_database.windows.template_debug.x86_64.obj"
+    },
+    {
+        "command": "cl /Fosrc\\database\\gotool_database.windows.template_debug.x86_64.obj /c src\\database\\gotool_database.cpp /TP /std:c++20 /permissive- /EHsc /nologo /utf-8 /MT /O2 /DTYPED_METHOD_BIND /DNOMINMAX /DWINDOWS_ENABLED /D_HAS_EXCEPTIONS=0 /DTHREADS_ENABLED /DHOT_RELOAD_ENABLED /DDEBUG_ENABLED /DNDEBUG /DGDEXTENSION /DSQLITE_THREADSAFE=1 /DSQLITE_OMIT_LOAD_EXTENSION /Igodot-cpp\\include /Igodot-cpp\\gen\\include /Isrc /Ithird-party\\sqlite3 /Ithird-party\\doctest",
+        "directory": "Y:\\GoTool-Center",
+        "file": "src\\database\\gotool_database.cpp",
+        "output": "src\\database\\gotool_database.windows.template_debug.x86_64.obj"
+    },
+    {
+        "command": "cl /Fosrc\\database\\gotool_schema.windows.template_debug.x86_64.obj /c src\\database\\gotool_schema.cpp /TP /std:c++20 /permissive- /EHsc /nologo /utf-8 /MT /O2 /DTYPED_METHOD_BIND /DNOMINMAX /DWINDOWS_ENABLED /D_HAS_EXCEPTIONS=0 /DTHREADS_ENABLED /DHOT_RELOAD_ENABLED /DDEBUG_ENABLED /DNDEBUG /DGDEXTENSION /DSQLITE_THREADSAFE=1 /DSQLITE_OMIT_LOAD_EXTENSION /Igodot-cpp\\include /Igodot-cpp\\gen\\include /Isrc /Ithird-party\\sqlite3 /Ithird-party\\doctest",
+        "directory": "Y:\\GoTool-Center",
+        "file": "src\\database\\gotool_schema.cpp",
+        "output": "src\\database\\gotool_schema.windows.template_debug.x86_64.obj"
+    },
+    {
+        "command": "cl /Fosrc\\database\\gotool_schema.windows.template_debug.x86_64.obj /c src\\database\\gotool_schema.cpp /TP /std:c++20 /permissive- /EHsc /nologo /utf-8 /MT /O2 /DTYPED_METHOD_BIND /DNOMINMAX /DWINDOWS_ENABLED /D_HAS_EXCEPTIONS=0 /DTHREADS_ENABLED /DHOT_RELOAD_ENABLED /DDEBUG_ENABLED /DNDEBUG /DGDEXTENSION /DSQLITE_THREADSAFE=1 /DSQLITE_OMIT_LOAD_EXTENSION /Igodot-cpp\\include /Igodot-cpp\\gen\\include /Isrc /Ithird-party\\sqlite3 /Ithird-party\\doctest",
+        "directory": "Y:\\GoTool-Center",
+        "file": "src\\database\\gotool_schema.cpp",
+        "output": "src\\database\\gotool_schema.windows.template_debug.x86_64.obj"
+    },
+    {
+        "command": "cl /Fosrc\\database\\gotool_project_registry_repository.windows.template_debug.x86_64.obj /c src\\database\\gotool_project_registry_repository.cpp /TP /std:c++20 /permissive- /EHsc /nologo /utf-8 /MT /O2 /DTYPED_METHOD_BIND /DNOMINMAX /DWINDOWS_ENABLED /D_HAS_EXCEPTIONS=0 /DTHREADS_ENABLED /DHOT_RELOAD_ENABLED /DDEBUG_ENABLED /DNDEBUG /DGDEXTENSION /DSQLITE_THREADSAFE=1 /DSQLITE_OMIT_LOAD_EXTENSION /Igodot-cpp\\include /Igodot-cpp\\gen\\include /Isrc /Ithird-party\\sqlite3 /Ithird-party\\doctest",
+        "directory": "Y:\\GoTool-Center",
+        "file": "src\\database\\gotool_project_registry_repository.cpp",
+        "output": "src\\database\\gotool_project_registry_repository.windows.template_debug.x86_64.obj"
+    },
+    {
+        "command": "cl /Fosrc\\database\\gotool_project_registry_repository.windows.template_debug.x86_64.obj /c src\\database\\gotool_project_registry_repository.cpp /TP /std:c++20 /permissive- /EHsc /nologo /utf-8 /MT /O2 /DTYPED_METHOD_BIND /DNOMINMAX /DWINDOWS_ENABLED /D_HAS_EXCEPTIONS=0 /DTHREADS_ENABLED /DHOT_RELOAD_ENABLED /DDEBUG_ENABLED /DNDEBUG /DGDEXTENSION /DSQLITE_THREADSAFE=1 /DSQLITE_OMIT_LOAD_EXTENSION /Igodot-cpp\\include /Igodot-cpp\\gen\\include /Isrc /Ithird-party\\sqlite3 /Ithird-party\\doctest",
+        "directory": "Y:\\GoTool-Center",
+        "file": "src\\database\\gotool_project_registry_repository.cpp",
+        "output": "src\\database\\gotool_project_registry_repository.windows.template_debug.x86_64.obj"
+    },
+    {
+        "command": "cl /Fosrc\\project_scanner\\native_directory_enumerator.windows.template_debug.x86_64.obj /c src\\project_scanner\\native_directory_enumerator.cpp /TP /std:c++20 /permissive- /EHsc /nologo /utf-8 /MT /O2 /DTYPED_METHOD_BIND /DNOMINMAX /DWINDOWS_ENABLED /D_HAS_EXCEPTIONS=0 /DTHREADS_ENABLED /DHOT_RELOAD_ENABLED /DDEBUG_ENABLED /DNDEBUG /DGDEXTENSION /DSQLITE_THREADSAFE=1 /DSQLITE_OMIT_LOAD_EXTENSION /Igodot-cpp\\include /Igodot-cpp\\gen\\include /Isrc /Ithird-party\\sqlite3 /Ithird-party\\doctest",
+        "directory": "Y:\\GoTool-Center",
+        "file": "src\\project_scanner\\native_directory_enumerator.cpp",
+        "output": "src\\project_scanner\\native_directory_enumerator.windows.template_debug.x86_64.obj"
+    },
+    {
+        "command": "cl /Fosrc\\project_scanner\\native_directory_enumerator.windows.template_debug.x86_64.obj /c src\\project_scanner\\native_directory_enumerator.cpp /TP /std:c++20 /permissive- /EHsc /nologo /utf-8 /MT /O2 /DTYPED_METHOD_BIND /DNOMINMAX /DWINDOWS_ENABLED /D_HAS_EXCEPTIONS=0 /DTHREADS_ENABLED /DHOT_RELOAD_ENABLED /DDEBUG_ENABLED /DNDEBUG /DGDEXTENSION /DSQLITE_THREADSAFE=1 /DSQLITE_OMIT_LOAD_EXTENSION /Igodot-cpp\\include /Igodot-cpp\\gen\\include /Isrc /Ithird-party\\sqlite3 /Ithird-party\\doctest",
+        "directory": "Y:\\GoTool-Center",
+        "file": "src\\project_scanner\\native_directory_enumerator.cpp",
+        "output": "src\\project_scanner\\native_directory_enumerator.windows.template_debug.x86_64.obj"
+    },
+    {
+        "command": "cl /Fosrc\\project_scanner\\native_scan_pipeline.windows.template_debug.x86_64.obj /c src\\project_scanner\\native_scan_pipeline.cpp /TP /std:c++20 /permissive- /EHsc /nologo /utf-8 /MT /O2 /DTYPED_METHOD_BIND /DNOMINMAX /DWINDOWS_ENABLED /D_HAS_EXCEPTIONS=0 /DTHREADS_ENABLED /DHOT_RELOAD_ENABLED /DDEBUG_ENABLED /DNDEBUG /DGDEXTENSION /DSQLITE_THREADSAFE=1 /DSQLITE_OMIT_LOAD_EXTENSION /Igodot-cpp\\include /Igodot-cpp\\gen\\include /Isrc /Ithird-party\\sqlite3 /Ithird-party\\doctest",
+        "directory": "Y:\\GoTool-Center",
+        "file": "src\\project_scanner\\native_scan_pipeline.cpp",
+        "output": "src\\project_scanner\\native_scan_pipeline.windows.template_debug.x86_64.obj"
+    },
+    {
+        "command": "cl /Fosrc\\project_scanner\\native_scan_pipeline.windows.template_debug.x86_64.obj /c src\\project_scanner\\native_scan_pipeline.cpp /TP /std:c++20 /permissive- /EHsc /nologo /utf-8 /MT /O2 /DTYPED_METHOD_BIND /DNOMINMAX /DWINDOWS_ENABLED /D_HAS_EXCEPTIONS=0 /DTHREADS_ENABLED /DHOT_RELOAD_ENABLED /DDEBUG_ENABLED /DNDEBUG /DGDEXTENSION /DSQLITE_THREADSAFE=1 /DSQLITE_OMIT_LOAD_EXTENSION /Igodot-cpp\\include /Igodot-cpp\\gen\\include /Isrc /Ithird-party\\sqlite3 /Ithird-party\\doctest",
+        "directory": "Y:\\GoTool-Center",
+        "file": "src\\project_scanner\\native_scan_pipeline.cpp",
+        "output": "src\\project_scanner\\native_scan_pipeline.windows.template_debug.x86_64.obj"
+    },
+    {
+        "command": "cl /Fosrc\\project_scanner\\native_scan_rules.windows.template_debug.x86_64.obj /c src\\project_scanner\\native_scan_rules.cpp /TP /std:c++20 /permissive- /EHsc /nologo /utf-8 /MT /O2 /DTYPED_METHOD_BIND /DNOMINMAX /DWINDOWS_ENABLED /D_HAS_EXCEPTIONS=0 /DTHREADS_ENABLED /DHOT_RELOAD_ENABLED /DDEBUG_ENABLED /DNDEBUG /DGDEXTENSION /DSQLITE_THREADSAFE=1 /DSQLITE_OMIT_LOAD_EXTENSION /Igodot-cpp\\include /Igodot-cpp\\gen\\include /Isrc /Ithird-party\\sqlite3 /Ithird-party\\doctest",
+        "directory": "Y:\\GoTool-Center",
+        "file": "src\\project_scanner\\native_scan_rules.cpp",
+        "output": "src\\project_scanner\\native_scan_rules.windows.template_debug.x86_64.obj"
+    },
+    {
+        "command": "cl /Fosrc\\project_scanner\\native_scan_rules.windows.template_debug.x86_64.obj /c src\\project_scanner\\native_scan_rules.cpp /TP /std:c++20 /permissive- /EHsc /nologo /utf-8 /MT /O2 /DTYPED_METHOD_BIND /DNOMINMAX /DWINDOWS_ENABLED /D_HAS_EXCEPTIONS=0 /DTHREADS_ENABLED /DHOT_RELOAD_ENABLED /DDEBUG_ENABLED /DNDEBUG /DGDEXTENSION /DSQLITE_THREADSAFE=1 /DSQLITE_OMIT_LOAD_EXTENSION /Igodot-cpp\\include /Igodot-cpp\\gen\\include /Isrc /Ithird-party\\sqlite3 /Ithird-party\\doctest",
+        "directory": "Y:\\GoTool-Center",
+        "file": "src\\project_scanner\\native_scan_rules.cpp",
+        "output": "src\\project_scanner\\native_scan_rules.windows.template_debug.x86_64.obj"
+    },
+    {
+        "command": "cl /Fosrc\\project_scanner\\native_script_parser.windows.template_debug.x86_64.obj /c src\\project_scanner\\native_script_parser.cpp /TP /std:c++20 /permissive- /EHsc /nologo /utf-8 /MT /O2 /DTYPED_METHOD_BIND /DNOMINMAX /DWINDOWS_ENABLED /D_HAS_EXCEPTIONS=0 /DTHREADS_ENABLED /DHOT_RELOAD_ENABLED /DDEBUG_ENABLED /DNDEBUG /DGDEXTENSION /DSQLITE_THREADSAFE=1 /DSQLITE_OMIT_LOAD_EXTENSION /Igodot-cpp\\include /Igodot-cpp\\gen\\include /Isrc /Ithird-party\\sqlite3 /Ithird-party\\doctest",
+        "directory": "Y:\\GoTool-Center",
+        "file": "src\\project_scanner\\native_script_parser.cpp",
+        "output": "src\\project_scanner\\native_script_parser.windows.template_debug.x86_64.obj"
+    },
+    {
+        "command": "cl /Fosrc\\project_scanner\\native_script_parser.windows.template_debug.x86_64.obj /c src\\project_scanner\\native_script_parser.cpp /TP /std:c++20 /permissive- /EHsc /nologo /utf-8 /MT /O2 /DTYPED_METHOD_BIND /DNOMINMAX /DWINDOWS_ENABLED /D_HAS_EXCEPTIONS=0 /DTHREADS_ENABLED /DHOT_RELOAD_ENABLED /DDEBUG_ENABLED /DNDEBUG /DGDEXTENSION /DSQLITE_THREADSAFE=1 /DSQLITE_OMIT_LOAD_EXTENSION /Igodot-cpp\\include /Igodot-cpp\\gen\\include /Isrc /Ithird-party\\sqlite3 /Ithird-party\\doctest",
+        "directory": "Y:\\GoTool-Center",
+        "file": "src\\project_scanner\\native_script_parser.cpp",
+        "output": "src\\project_scanner\\native_script_parser.windows.template_debug.x86_64.obj"
+    },
+    {
+        "command": "cl /Fothird-party\\sqlite3\\sqlite3.windows.template_debug.x86_64.obj /c third-party\\sqlite3\\sqlite3.c /nologo /utf-8 /MT /O2 /DTYPED_METHOD_BIND /DNOMINMAX /DWINDOWS_ENABLED /D_HAS_EXCEPTIONS=0 /DTHREADS_ENABLED /DHOT_RELOAD_ENABLED /DDEBUG_ENABLED /DNDEBUG /DGDEXTENSION /DSQLITE_THREADSAFE=1 /DSQLITE_OMIT_LOAD_EXTENSION /Igodot-cpp\\include /Igodot-cpp\\gen\\include /Isrc /Ithird-party\\sqlite3 /Ithird-party\\doctest",
+        "directory": "Y:\\GoTool-Center",
+        "file": "third-party\\sqlite3\\sqlite3.c",
+        "output": "third-party\\sqlite3\\sqlite3.windows.template_debug.x86_64.obj"
+    },
+    {
+        "command": "cl /Fothird-party\\sqlite3\\sqlite3.windows.template_debug.x86_64.obj /c third-party\\sqlite3\\sqlite3.c /nologo /utf-8 /MT /O2 /DTYPED_METHOD_BIND /DNOMINMAX /DWINDOWS_ENABLED /D_HAS_EXCEPTIONS=0 /DTHREADS_ENABLED /DHOT_RELOAD_ENABLED /DDEBUG_ENABLED /DNDEBUG /DGDEXTENSION /DSQLITE_THREADSAFE=1 /DSQLITE_OMIT_LOAD_EXTENSION /Igodot-cpp\\include /Igodot-cpp\\gen\\include /Isrc /Ithird-party\\sqlite3 /Ithird-party\\doctest",
+        "directory": "Y:\\GoTool-Center",
+        "file": "third-party\\sqlite3\\sqlite3.c",
+        "output": "third-party\\sqlite3\\sqlite3.windows.template_debug.x86_64.obj"
     }
 ]

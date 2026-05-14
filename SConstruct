@@ -16,6 +16,9 @@ platform = ARGUMENTS.get("platform", "")
 build_target = ARGUMENTS.get("target", "")
 arch = ARGUMENTS.get("arch", "")
 build_doctest = str(ARGUMENTS.pop("doctest", "0")).lower() in {"1", "true", "yes"}
+build_compiledb = str(ARGUMENTS.pop("compiledb", "1")).lower() in {
+    "1", "true", "yes", "on"
+}
 
 if not platform:
     raise RuntimeError("Missing required SCons argument: platform=windows|linux|macos")
@@ -155,6 +158,17 @@ library = env.SharedLibrary(
 )
 
 default_targets = [library]
+
+if build_compiledb:
+    env.Tool("compilation_db")
+
+    compile_commands = env.CompilationDatabase(
+        target="compile_commands.json",
+        source=library,
+    )
+
+    default_targets.append(compile_commands)
+    env.Alias("compiledb", compile_commands)
 
 if build_doctest:
     native_test_sources = [
