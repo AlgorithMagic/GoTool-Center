@@ -1,0 +1,47 @@
+# Dependabot version updates configuration.
+#
+# This file keeps repository automation and git submodules current.
+#
+# Notes:
+# - "github-actions" scans .github/workflows when directory is "/".
+# - "gitsubmodule" scans .gitmodules and proposes updates for tracked submodules.
+# - C++ libraries that are vendored directly, copied into the repo, or manually managed
+#   are not updated by Dependabot unless they are represented through a supported
+#   package ecosystem or git submodule.
+
+version: 2
+
+updates:
+  # Update GitHub Actions used by workflows under .github/workflows.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/Vancouver"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "build"
+      include: "scope"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  # Update git submodules, including godot-cpp.
+  - package-ecosystem: "gitsubmodule"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:30"
+      timezone: "America/Vancouver"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "build"
+      include: "scope"
+    groups:
+      git-submodules:
+        patterns:
+          - "*"
