@@ -565,6 +565,9 @@ void create_schema_v2_tables(Database &database) {
             parser_bytes_read INTEGER NOT NULL DEFAULT 0,
             parser_tokens_generated INTEGER NOT NULL DEFAULT 0,
             parser_limit_exceeded_count INTEGER NOT NULL DEFAULT 0,
+            parser_limit_exceeded_header_fast_count INTEGER NOT NULL DEFAULT 0,
+            parser_limit_exceeded_full_symbols_count INTEGER NOT NULL DEFAULT 0,
+            parser_limit_exceeded_scene_attachments_count INTEGER NOT NULL DEFAULT 0,
             symbol_rows_created INTEGER NOT NULL DEFAULT 0,
             reference_rows_created INTEGER NOT NULL DEFAULT 0,
             doc_comment_rows_created INTEGER NOT NULL DEFAULT 0,
@@ -1149,6 +1152,16 @@ void ensure_schema_v3_columns(Database &database) {
   add_column_if_missing(
       database, "scan_metrics",
       "parser_limit_exceeded_count INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(
+      database, "scan_metrics",
+      "parser_limit_exceeded_header_fast_count INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(
+      database, "scan_metrics",
+      "parser_limit_exceeded_full_symbols_count INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(
+      database, "scan_metrics",
+      "parser_limit_exceeded_scene_attachments_count INTEGER NOT NULL DEFAULT "
+      "0");
   add_column_if_missing(database, "scan_metrics",
                         "symbol_rows_created INTEGER NOT NULL DEFAULT 0");
   add_column_if_missing(database, "scan_metrics",

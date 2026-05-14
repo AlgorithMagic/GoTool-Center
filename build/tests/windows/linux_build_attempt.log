@@ -1,0 +1,9 @@
+scons: Reading SConscript files ...
+Auto-detected 16 CPU cores available for build parallelism. Using 15 cores by default. You can override it with the -j argument.
+Building for architecture x86_64 on platform linux
+scons: done reading SConscript files.
+scons: Building targets ...
+Linking Static Library godot-cpp\bin\libgodot-cpp.linux.template_debug.x86_64.a ...
+scons: C:\WINDOWS\System32\cmd.exe: No such file or directory
+scons: *** [godot-cpp\bin\libgodot-cpp.linux.template_debug.x86_64.a] Error 127
+scons: building terminated because of errors.

@@ -16,7 +16,7 @@ static constexpr int64_t PARSER_VERSION = 2;
 static constexpr int64_t DEPENDENCY_PARSER_VERSION = 1;
 static constexpr int64_t SCENE_PARSER_VERSION = 1;
 static constexpr int64_t CLASSIFIER_VERSION = 2;
-static constexpr int64_t SCANNER_SCHEMA_VERSION = 7;
+static constexpr int64_t SCANNER_SCHEMA_VERSION = 8;
 
 enum class EntryKind : uint8_t {
     File = 0,
@@ -302,6 +302,9 @@ struct ScanMetrics {
     int64_t parser_bytes_read = 0;
     int64_t parser_tokens_generated = 0;
     int64_t parser_limit_exceeded_count = 0;
+    int64_t parser_limit_exceeded_header_fast_count = 0;
+    int64_t parser_limit_exceeded_full_symbols_count = 0;
+    int64_t parser_limit_exceeded_scene_attachments_count = 0;
     int64_t symbol_rows_created = 0;
     int64_t reference_rows_created = 0;
     int64_t doc_comment_rows_created = 0;

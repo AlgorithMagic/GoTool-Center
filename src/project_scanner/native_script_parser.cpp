@@ -30,6 +30,104 @@ struct Token {
     int64_t column = 0;
 };
 
+struct ScriptTierPolicyLimits {
+    int64_t max_lines = 1;
+    int64_t max_bytes = 1;
+    int64_t max_tokens = 1;
+    int64_t max_dependencies = 1;
+};
+
+struct SceneTierPolicyLimits {
+    int64_t max_lines = 1;
+    int64_t max_bytes = 1;
+};
+
+static constexpr ScriptTierPolicyLimits HEADER_FAST_LIMITS {
+    240,
+    64 * 1024,
+    16 * 1024,
+    2 * 1024
+};
+
+static constexpr ScriptTierPolicyLimits FULL_SYMBOLS_LIMITS {
+    250 * 1024,
+    8 * 1024 * 1024,
+    512 * 1024,
+    32 * 1024
+};
+
+static constexpr SceneTierPolicyLimits SCENE_ATTACHMENTS_LIMITS {
+    64 * 1024,
+    8 * 1024 * 1024
+};
+
+ScriptTierPolicyLimits default_script_limits_for_tier(ParseTier parse_tier) {
+    switch (parse_tier) {
+        case ParseTier::HeaderFast:
+            return HEADER_FAST_LIMITS;
+        case ParseTier::FullSymbols:
+            return FULL_SYMBOLS_LIMITS;
+        case ParseTier::SceneAttachments:
+            return FULL_SYMBOLS_LIMITS;
+    }
+
+    return FULL_SYMBOLS_LIMITS;
+}
+
+ScriptTierPolicyLimits resolve_script_limits(
+    ParseTier parse_tier,
+    int64_t max_lines,
+    int64_t max_bytes,
+    int64_t max_tokens,
+    int64_t max_dependencies
+) {
+    ScriptTierPolicyLimits limits = default_script_limits_for_tier(parse_tier);
+    if (max_lines > 0) {
+        limits.max_lines = max_lines;
+    }
+    if (max_bytes > 0) {
+        limits.max_bytes = max_bytes;
+    }
+    if (max_tokens > 0) {
+        limits.max_tokens = max_tokens;
+    }
+    if (max_dependencies > 0) {
+        limits.max_dependencies = max_dependencies;
+    }
+
+    limits.max_lines = std::max<int64_t>(limits.max_lines, 1);
+    limits.max_bytes = std::max<int64_t>(limits.max_bytes, 1);
+    limits.max_tokens = std::max<int64_t>(limits.max_tokens, 1);
+    limits.max_dependencies = std::max<int64_t>(limits.max_dependencies, 1);
+    return limits;
+}
+
+SceneTierPolicyLimits resolve_scene_limits(int64_t max_lines, int64_t max_bytes) {
+    SceneTierPolicyLimits limits = SCENE_ATTACHMENTS_LIMITS;
+    if (max_lines > 0) {
+        limits.max_lines = max_lines;
+    }
+    if (max_bytes > 0) {
+        limits.max_bytes = max_bytes;
+    }
+
+    limits.max_lines = std::max<int64_t>(limits.max_lines, 1);
+    limits.max_bytes = std::max<int64_t>(limits.max_bytes, 1);
+    return limits;
+}
+
+void apply_limit_status(ScriptParseResult &result) {
+    if (!result.limit_exceeded) {
+        return;
+    }
+
+    result.parser_incomplete = true;
+    result.script_flags |= SCRIPT_FLAG_PARSER_INCOMPLETE;
+    if (result.parse_error.empty()) {
+        result.parse_error = "limit_exceeded";
+    }
+}
+
 bool starts_with(std::string_view value, std::string_view prefix) {
     return value.size() >= prefix.size() && value.substr(0, prefix.size()) == prefix;
 }
@@ -2022,16 +2120,18 @@ void extract_gdscript_symbols_and_docs(
     int64_t class_symbol_id = ensure_class_symbol(result, next_symbol_id);
 
     for (size_t i = 0; i < lines.size(); ++i) {
-        std::string_view trimmed = trim_left_ascii_view(lines[i]);
+        const std::string_view raw_line = lines[i];
+        std::string_view trimmed = trim_left_ascii_view(raw_line);
+        const bool is_top_level = trimmed.size() == raw_line.size();
         if (trimmed.empty()) {
             continue;
         }
 
-        if (starts_with(trimmed, "@tool")) {
+        if (is_top_level && starts_with(trimmed, "@tool")) {
             result.script_flags |= SCRIPT_FLAG_IS_TOOL_SCRIPT;
         }
 
-        if (starts_with(trimmed, "extends ")) {
+        if (is_top_level && starts_with(trimmed, "extends ")) {
             const std::string base_name = extract_identifier_token(trimmed.substr(8));
             const std::string lowered = lower_ascii(base_name);
             if (lowered.find("node") != std::string::npos) {
@@ -2045,27 +2145,35 @@ void extract_gdscript_symbols_and_docs(
         bool onready = false;
         bool static_member = false;
 
-        while (starts_with(trimmed, "@export ")) {
-            exported = true;
-            result.script_flags |= SCRIPT_FLAG_HAS_EXPORTS;
-            trimmed = trim_left_ascii_view(trimmed.substr(8));
+        if (is_top_level) {
+            while (starts_with(trimmed, "@export ")) {
+                exported = true;
+                result.script_flags |= SCRIPT_FLAG_HAS_EXPORTS;
+                trimmed = trim_left_ascii_view(trimmed.substr(8));
+            }
+            while (starts_with(trimmed, "@onready ")) {
+                onready = true;
+                trimmed = trim_left_ascii_view(trimmed.substr(9));
+            }
+            while (starts_with(trimmed, "export ")) {
+                exported = true;
+                result.script_flags |= SCRIPT_FLAG_HAS_EXPORTS;
+                trimmed = trim_left_ascii_view(trimmed.substr(7));
+            }
+            while (starts_with(trimmed, "onready ")) {
+                onready = true;
+                trimmed = trim_left_ascii_view(trimmed.substr(8));
+            }
+            while (starts_with(trimmed, "static ")) {
+                static_member = true;
+                trimmed = trim_left_ascii_view(trimmed.substr(7));
+            }
         }
-        while (starts_with(trimmed, "@onready ")) {
-            onready = true;
-            trimmed = trim_left_ascii_view(trimmed.substr(9));
-        }
-        while (starts_with(trimmed, "export ")) {
-            exported = true;
-            result.script_flags |= SCRIPT_FLAG_HAS_EXPORTS;
-            trimmed = trim_left_ascii_view(trimmed.substr(7));
-        }
-        while (starts_with(trimmed, "onready ")) {
-            onready = true;
-            trimmed = trim_left_ascii_view(trimmed.substr(8));
-        }
-        while (starts_with(trimmed, "static ")) {
-            static_member = true;
-            trimmed = trim_left_ascii_view(trimmed.substr(7));
+
+        // Symbol extraction is intentionally top-level only to avoid treating
+        // indented local declarations as authoritative script symbols.
+        if (!is_top_level) {
+            continue;
         }
 
         if (starts_with(trimmed, "class_name ")) {
@@ -2829,13 +2937,21 @@ ScriptParseResult parse_script_intelligence(
     result.parse_tier = parse_tier;
     result.language = language_from_extension(extension);
 
+    const ScriptTierPolicyLimits limits = resolve_script_limits(
+        parse_tier,
+        max_lines,
+        max_bytes,
+        max_tokens,
+        max_dependencies
+    );
+
     if (result.language == ScriptLanguage::Unknown) {
         result.status = ParseStatus::UnsupportedLanguage;
         return result;
     }
 
     bool byte_limit_exceeded = false;
-    const std::string source = read_file_with_limit(absolute_path, max_bytes, byte_limit_exceeded);
+    const std::string source = read_file_with_limit(absolute_path, limits.max_bytes, byte_limit_exceeded);
     if (source.empty()) {
         std::ifstream probe(absolute_path, std::ios::binary);
         if (!probe.is_open()) {
@@ -2847,9 +2963,7 @@ ScriptParseResult parse_script_intelligence(
 
     result.bytes_read = static_cast<int64_t>(source.size());
     result.limit_exceeded = byte_limit_exceeded;
-    if (byte_limit_exceeded) {
-        result.parse_error = "limit_exceeded";
-    }
+    apply_limit_status(result);
 
     std::string source_without_comments;
     if (result.language == ScriptLanguage::GDScript) {
@@ -2864,8 +2978,8 @@ ScriptParseResult parse_script_intelligence(
     const std::vector<Token> tokens = tokenize_source(
         source_without_comments,
         result.language,
-        std::max<int64_t>(max_lines, 1),
-        std::max<int64_t>(max_tokens, 1),
+        limits.max_lines,
+        limits.max_tokens,
         tokenizer_limit_exceeded,
         lines_scanned
     );
@@ -2875,19 +2989,14 @@ ScriptParseResult parse_script_intelligence(
     result.tokens_generated = static_cast<int64_t>(tokens.size());
     result.lines_scanned = lines_scanned;
     result.limit_exceeded = result.limit_exceeded || tokenizer_limit_exceeded;
-    if (result.limit_exceeded && result.parse_error.empty()) {
-        result.parse_error = "limit_exceeded";
-    }
-    result.parser_incomplete = result.limit_exceeded;
-    if (result.parser_incomplete) {
-        result.script_flags |= SCRIPT_FLAG_PARSER_INCOMPLETE;
-    }
+    apply_limit_status(result);
 
     const auto dependency_start = std::chrono::steady_clock::now();
-    extract_dependencies(tokens, result, std::max<int64_t>(max_dependencies, 1));
+    extract_dependencies(tokens, result, limits.max_dependencies);
     result.dependency_parse_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - dependency_start
     ).count();
+    apply_limit_status(result);
 
     fill_class_fields_from_tokens(tokens, result);
 
@@ -2914,6 +3023,8 @@ ScriptParseResult parse_script_intelligence(
 
         apply_script_flags_to_root_symbol(result);
     }
+
+    apply_limit_status(result);
 
     if (!result.class_name.empty()) {
         result.status = ParseStatus::ParsedClass;
@@ -2949,9 +3060,10 @@ SceneParseResult parse_scene_attachments(
     int64_t max_bytes
 ) {
     SceneParseResult result;
+    const SceneTierPolicyLimits limits = resolve_scene_limits(max_lines, max_bytes);
 
     bool byte_limit_exceeded = false;
-    const std::string source = read_file_with_limit(absolute_path, max_bytes, byte_limit_exceeded);
+    const std::string source = read_file_with_limit(absolute_path, limits.max_bytes, byte_limit_exceeded);
     if (source.empty()) {
         std::ifstream probe(absolute_path, std::ios::binary);
         if (!probe.is_open()) {
@@ -2979,7 +3091,7 @@ SceneParseResult parse_scene_attachments(
 
     while (std::getline(stream, line)) {
         ++line_number;
-        if (line_number > std::max<int64_t>(max_lines, 1)) {
+        if (line_number > limits.max_lines) {
             result.limit_exceeded = true;
             break;
         }
@@ -3081,6 +3193,9 @@ SceneParseResult parse_scene_attachments(
     }
 
     result.lines_scanned = line_number;
+    if (result.limit_exceeded && result.parse_error.empty()) {
+        result.parse_error = "limit_exceeded";
+    }
     result.parse_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - parse_start
     ).count();

@@ -1,0 +1,16 @@
+scons: Reading SConscript files ...
+Auto-detected 16 CPU cores available for build parallelism. Using 15 cores by default. You can override it with the -j argument.
+Building for architecture x86_64 on platform macos
+ValueError: Required toolchain not found for platform macos:
+  File "Y:\GoTool-Center\SConstruct", line 55:
+    env = SConscript(str(GODOT_CPP_SCONSTRUCT))
+  File "C:\Users\busin\scoop\apps\python\current\Lib\site-packages\SCons\Script\SConscript.py", line 687:
+    return method(*args, **kw)
+  File "C:\Users\busin\scoop\apps\python\current\Lib\site-packages\SCons\Script\SConscript.py", line 623:
+    return _SConscript(self.fs, *files, **subst_kw)
+  File "C:\Users\busin\scoop\apps\python\current\Lib\site-packages\SCons\Script\SConscript.py", line 281:
+    exec(compile(scriptdata, scriptname, 'exec'), call_stack[-1].globals)
+  File "Y:\GoTool-Center\godot-cpp\SConstruct", line 53:
+    cpp_tool.generate(env)
+  File "Y:\GoTool-Center\godot-cpp\tools\godotcpp.py", line 475:
+    raise ValueError("Required toolchain not found for platform " + env["platform"])

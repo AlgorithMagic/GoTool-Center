@@ -7,7 +7,6 @@
 
 #include "doctest.h"
 
-#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -497,7 +496,227 @@ TEST_CASE("script_parser_limits_are_enforced_without_throwing") {
 
     CHECK(result.status == ParseStatus::ParsedClass);
     CHECK(result.limit_exceeded);
+    CHECK(result.parser_incomplete);
+    CHECK(result.parse_error == "limit_exceeded");
+    CHECK((result.script_flags & gotool::project_scanner::SCRIPT_FLAG_PARSER_INCOMPLETE) != 0);
     CHECK(static_cast<int64_t>(result.dependencies.size()) == 3);
+}
+
+TEST_CASE("parse_tier_policy_defaults_keep_header_fast_small_and_full_symbols_high_cap") {
+    TemporaryRoot root(make_temp_root("parse_tier_policy_defaults"));
+    const std::filesystem::path script = root.path / "tier_policy.gd";
+
+    std::string text;
+    text += "class_name TierPolicy\n";
+    text += "extends Node\n";
+    for (int32_t i = 0; i < 700; ++i) {
+        text += "var dep" + std::to_string(i) + " = preload(\"res://dep" + std::to_string(i) + ".tscn\")\n";
+    }
+    write_text(script, text);
+
+    const gotool::project_scanner::ScriptParseResult header =
+        gotool::project_scanner::parse_script_header(script, ".gd");
+    CHECK(header.limit_exceeded);
+    CHECK(header.parser_incomplete);
+    CHECK(header.parse_error == "limit_exceeded");
+    CHECK(static_cast<int64_t>(header.lines_scanned) <= 240);
+
+    const gotool::project_scanner::ScriptParseResult full =
+        gotool::project_scanner::parse_script_intelligence(
+            script,
+            ".gd",
+            gotool::project_scanner::ParseTier::FullSymbols
+        );
+    CHECK_FALSE(full.limit_exceeded);
+    CHECK_FALSE(full.parser_incomplete);
+    CHECK(full.parse_error.empty());
+    CHECK(full.lines_scanned > 240);
+    CHECK(full.tokens_generated > 0);
+}
+
+TEST_CASE("scene_attachment_parser_default_policy_handles_large_scene_files") {
+    TemporaryRoot root(make_temp_root("scene_attachment_policy_defaults"));
+    const std::filesystem::path scene = root.path / "scenes" / "large.tscn";
+
+    std::string text;
+    text += "[gd_scene load_steps=2 format=3]\n\n";
+    text += "[ext_resource type=\"Script\" uid=\"uid://large-script\" path=\"res://scripts/player.gd\" id=\"1_player\"]\n\n";
+    text += "[node name=\"Root\" type=\"Node\"]\n";
+    text += "script = ExtResource(\"1_player\")\n";
+    for (int32_t i = 0; i < 3000; ++i) {
+        text += "; filler line " + std::to_string(i) + "\n";
+    }
+    write_text(scene, text);
+
+    const gotool::project_scanner::SceneParseResult result =
+        gotool::project_scanner::parse_scene_attachments(scene);
+
+    CHECK_FALSE(result.limit_exceeded);
+    CHECK(result.parse_error.empty());
+    CHECK(result.lines_scanned > 2048);
+    CHECK_FALSE(result.script_attachments.empty());
+}
+
+TEST_CASE("scan_pipeline_records_tiered_limit_metrics_and_persists_parser_incomplete_flags") {
+    TemporaryRoot root(make_temp_root("pipeline_limit_metrics_and_flags"));
+    TemporaryRoot db_root(make_temp_root("pipeline_limit_metrics_and_flags_db"));
+
+    write_text(root.path / "project.godot", "[application]\n");
+
+    std::string large_script;
+    large_script += "class_name LimitHeavy\n";
+    large_script += "extends Node\n";
+    large_script += "var keep = preload(\"res://scenes/keep.tscn\")\n";
+    large_script += "var blob = \"";
+    large_script.append(8 * 1024 * 1024 + 4096, 'x');
+    large_script += "\"\n";
+    write_text(root.path / "scripts" / "limit_heavy.gd", large_script);
+
+    std::string large_scene;
+    large_scene += "[gd_scene load_steps=2 format=3]\n\n";
+    large_scene += "[ext_resource type=\"Script\" uid=\"uid://limit-heavy\" path=\"res://scripts/limit_heavy.gd\" id=\"1_limit\"]\n\n";
+    large_scene += "[node name=\"Root\" type=\"Node\"]\n";
+    large_scene += "script = ExtResource(\"1_limit\")\n";
+    for (int32_t i = 0; i < 66 * 1024; ++i) {
+        large_scene += "; filler line " + std::to_string(i) + "\n";
+    }
+    write_text(root.path / "scenes" / "huge.tscn", large_scene);
+
+    Database database((db_root.path / "scanner.sqlite3").string());
+    gotool::database::create_schema(database, 0);
+    database.exec(
+        "INSERT INTO projects ("
+        "id, project_uid, display_name, root_absolute_path, root_canonical_path, "
+        "project_file_absolute_path, godot_version, identity_source, first_seen_unix, last_seen_unix, "
+        "created_at_unix, updated_at_unix"
+        ") VALUES ("
+        "1, 'pipeline-limit-metrics', 'pipeline-limit-metrics', '" + root.path.generic_string() + "', '" +
+        root.path.generic_string() + "', '" + (root.path / "project.godot").generic_string() +
+        "', '4.6.0-stable', 'test', 1, 1, 1, 1"
+        ");"
+    );
+
+    NativeScanPipeline pipeline(database);
+    ScanOptions options;
+    options.project_id = 1;
+    options.project_root = root.path;
+    options.include_hidden = true;
+    options.persist_to_database = true;
+    options.collect_custom_classes = true;
+    options.collect_script_dependencies = true;
+
+    const gotool::project_scanner::ScanResultSummary summary = pipeline.run(options);
+    CHECK(summary.scan_run_id > 0);
+
+    ScanRepository repository(database);
+    const ScanMetrics metrics = repository.get_scan_metrics(1, summary.scan_run_id);
+    CHECK(metrics.parser_limit_exceeded_count >= 2);
+    CHECK(metrics.parser_limit_exceeded_full_symbols_count >= 1);
+    CHECK(metrics.parser_limit_exceeded_scene_attachments_count >= 1);
+
+    const int64_t script_file_id = query_int64(
+        database,
+        "SELECT id FROM project_files WHERE project_id = 1 AND project_relative_path = 'scripts/limit_heavy.gd' LIMIT 1;"
+    );
+
+    const int64_t symbol_flags = query_int64(
+        database,
+        "SELECT COALESCE(symbol_flags, 0) "
+        "FROM script_symbols "
+        "WHERE project_id = 1 "
+        "  AND script_file_id = " + std::to_string(script_file_id) +
+        "  AND symbol_kind = 'class' "
+        "ORDER BY line_start ASC, id ASC "
+        "LIMIT 1;"
+    );
+    CHECK((symbol_flags & gotool::project_scanner::SYMBOL_FLAG_PARSER_INCOMPLETE) != 0);
+
+    const int64_t dependency_count = query_int64(
+        database,
+        "SELECT COUNT(*) FROM script_dependencies "
+        "WHERE project_id = 1 "
+        "  AND source_script_file_id = " + std::to_string(script_file_id) + ";"
+    );
+    CHECK(dependency_count > 0);
+
+    Statement class_row = database.prepare(
+        "SELECT parse_error FROM project_custom_classes "
+        "WHERE project_id = 1 "
+        "  AND script_project_relative_path = 'scripts/limit_heavy.gd' "
+        "LIMIT 1;"
+    );
+    REQUIRE(class_row.step() == Statement::StepResult::Row);
+    CHECK(class_row.column_text(0) == "limit_exceeded");
+}
+
+TEST_CASE("scan_repository_reference_queries_are_deterministically_ordered") {
+    TemporaryRoot root(make_temp_root("reference_query_deterministic_order"));
+    TemporaryRoot db_root(make_temp_root("reference_query_deterministic_order_db"));
+
+    write_text(root.path / "project.godot", "[application]\n");
+    write_text(
+        root.path / "scripts" / "order_case.gd",
+        "class_name OrderCase\n"
+        "extends Node\n"
+        "var a = preload(\"res://scenes/a.tscn\")\n"
+        "var b = preload(\"res://scenes/b.tscn\")\n"
+        "func run() -> void:\n"
+        "    var c = preload(\"res://scenes/c.tscn\")\n"
+    );
+
+    Database database((db_root.path / "scanner.sqlite3").string());
+    gotool::database::create_schema(database, 0);
+    database.exec(
+        "INSERT INTO projects ("
+        "id, project_uid, display_name, root_absolute_path, root_canonical_path, "
+        "project_file_absolute_path, godot_version, identity_source, first_seen_unix, last_seen_unix, "
+        "created_at_unix, updated_at_unix"
+        ") VALUES ("
+        "1, 'reference-query-deterministic', 'reference-query-deterministic', '" + root.path.generic_string() + "', '" +
+        root.path.generic_string() + "', '" + (root.path / "project.godot").generic_string() +
+        "', '4.6.0-stable', 'test', 1, 1, 1, 1"
+        ");"
+    );
+
+    NativeScanPipeline pipeline(database);
+    ScanOptions options;
+    options.project_id = 1;
+    options.project_root = root.path;
+    options.include_hidden = true;
+    options.persist_to_database = true;
+    options.collect_custom_classes = true;
+    options.collect_script_dependencies = true;
+    pipeline.run(options);
+
+    const int64_t script_file_id = query_int64(
+        database,
+        "SELECT id FROM project_files WHERE project_id = 1 AND project_relative_path = 'scripts/order_case.gd' LIMIT 1;"
+    );
+
+    ScanRepository repository(database);
+    const std::vector<gotool::project_scanner::ScriptReferenceRow> first =
+        repository.list_references_for_script(1, script_file_id);
+    const std::vector<gotool::project_scanner::ScriptReferenceRow> second =
+        repository.list_references_for_script(1, script_file_id);
+
+    REQUIRE(first.size() >= 3);
+    REQUIRE(second.size() == first.size());
+
+    for (size_t i = 1; i < first.size(); ++i) {
+        const auto &prev = first[i - 1];
+        const auto &current = first[i];
+        const bool is_sorted =
+            prev.source_line < current.source_line ||
+            (prev.source_line == current.source_line &&
+             (prev.source_column < current.source_column ||
+              (prev.source_column == current.source_column &&
+               prev.id < current.id)));
+        CHECK(is_sorted);
+    }
+
+    for (size_t i = 0; i < first.size(); ++i) {
+        CHECK(first[i].id == second[i].id);
+    }
 }
 
 TEST_CASE("script_parser_handles_large_synthetic_script_throughput") {
@@ -633,6 +852,62 @@ TEST_CASE("script_intelligence_parser_extracts_symbols_docs_and_references") {
     CHECK(has_preload_reference);
 }
 
+TEST_CASE("script_intelligence_reference_source_scopes_to_nearest_enclosing_symbol") {
+    TemporaryRoot root(make_temp_root("reference_source_scope"));
+    const std::filesystem::path script = root.path / "scope.gd";
+    write_text(
+        script,
+        "class_name ScopeCase\n"
+        "extends Node\n"
+        "var property_scene = preload(\"res://scenes/property.tscn\")\n"
+        "func spawn() -> void:\n"
+        "    var local_scene = preload(\"res://scenes/local.tscn\")\n"
+    );
+
+    const gotool::project_scanner::ScriptParseResult result =
+        gotool::project_scanner::parse_script_intelligence(
+            script,
+            ".gd",
+            gotool::project_scanner::ParseTier::FullSymbols
+        );
+
+    int64_t property_symbol_id = 0;
+    int64_t function_symbol_id = 0;
+    for (const auto &symbol : result.symbols) {
+        if (symbol.symbol_kind == gotool::project_scanner::SymbolKind::Property &&
+            symbol.name == "property_scene") {
+            property_symbol_id = symbol.local_symbol_id;
+        }
+        if (symbol.symbol_kind == gotool::project_scanner::SymbolKind::Function &&
+            symbol.name == "spawn") {
+            function_symbol_id = symbol.local_symbol_id;
+        }
+    }
+    REQUIRE(property_symbol_id > 0);
+    REQUIRE(function_symbol_id > 0);
+
+    bool saw_property_reference = false;
+    bool saw_function_reference = false;
+    for (const auto &reference : result.references) {
+        if (!reference.target_project_relative_path.has_value() ||
+            !reference.source_symbol_local_id.has_value()) {
+            continue;
+        }
+
+        if (reference.target_project_relative_path.value() == "scenes/property.tscn") {
+            saw_property_reference = true;
+            CHECK(reference.source_symbol_local_id.value() == property_symbol_id);
+        }
+        if (reference.target_project_relative_path.value() == "scenes/local.tscn") {
+            saw_function_reference = true;
+            CHECK(reference.source_symbol_local_id.value() == function_symbol_id);
+        }
+    }
+
+    CHECK(saw_property_reference);
+    CHECK(saw_function_reference);
+}
+
 TEST_CASE("scene_attachment_parser_extracts_external_resources_and_script_bindings") {
     TemporaryRoot root(make_temp_root("scene_attachment_parser"));
     const std::filesystem::path scene = root.path / "scenes" / "main.tscn";
@@ -751,6 +1026,9 @@ TEST_CASE("scanner_schema_v3_supports_batched_writes_tombstones_and_paging") {
     CHECK(clean.scripts_skipped_clean == 1);
 
     const ScanMetrics clean_metrics = repository.get_scan_metrics(1, clean.scan_run_id);
+    CHECK(clean_metrics.parser_limit_exceeded_header_fast_count == 0);
+    CHECK(clean_metrics.parser_limit_exceeded_full_symbols_count == 0);
+    CHECK(clean_metrics.parser_limit_exceeded_scene_attachments_count == 0);
     std::string unexpected_path;
     std::string unexpected_reason;
     if (clean_metrics.rows_updated != 0) {
@@ -874,6 +1152,85 @@ TEST_CASE("native_scan_pipeline_reparses_when_dependency_parser_version_changes"
     ScanRepository repository(database);
     const ScanMetrics metrics = repository.get_scan_metrics(1, rescanned.scan_run_id);
     CHECK(metrics.scripts_dependency_parsed == 1);
+}
+
+TEST_CASE("native_scan_pipeline_reparses_when_parser_version_changes") {
+    TemporaryRoot root(make_temp_root("parser_version_invalidation"));
+    TemporaryRoot db_root(make_temp_root("parser_version_invalidation_db"));
+
+    write_text(root.path / "project.godot", "[application]\n");
+    write_text(
+        root.path / "scripts" / "player.gd",
+        "class_name Player\n"
+        "extends Node\n"
+        "func spawn() -> void:\n"
+        "    pass\n"
+    );
+
+    Database database((db_root.path / "scanner.sqlite3").string());
+    gotool::database::create_schema(database, 0);
+    database.exec(
+        "INSERT INTO projects ("
+        "id, project_uid, display_name, root_absolute_path, root_canonical_path, "
+        "project_file_absolute_path, godot_version, identity_source, first_seen_unix, last_seen_unix, "
+        "created_at_unix, updated_at_unix"
+        ") VALUES ("
+        "1, 'scanner-parser-version', 'scanner-parser-version', '" + root.path.generic_string() + "', '" +
+        root.path.generic_string() + "', '" + (root.path / "project.godot").generic_string() +
+        "', '4.6.0-stable', 'test', 1, 1, 1, 1"
+        ");"
+    );
+
+    NativeScanPipeline pipeline(database);
+    ScanOptions options;
+    options.project_id = 1;
+    options.project_root = root.path;
+    options.include_hidden = true;
+    options.persist_to_database = true;
+    options.collect_custom_classes = true;
+    options.collect_script_dependencies = true;
+
+    const gotool::project_scanner::ScanResultSummary cold = pipeline.run(options);
+    CHECK(cold.scripts_parsed == 1);
+
+    const int64_t player_file_id = query_int64(
+        database,
+        "SELECT id FROM project_files WHERE project_id = 1 AND project_relative_path = 'scripts/player.gd' LIMIT 1;"
+    );
+
+    Statement force_old_parser_version = database.prepare(R"sql(
+        UPDATE project_files
+        SET parser_version = 0
+        WHERE project_id = ?1 AND id = ?2;
+    )sql");
+    force_old_parser_version.bind_int64(1, 1);
+    force_old_parser_version.bind_int64(2, player_file_id);
+    force_old_parser_version.step_done();
+
+    const gotool::project_scanner::ScanResultSummary rescanned = pipeline.run(options);
+    CHECK(rescanned.scripts_parsed == 1);
+
+    CHECK(
+        query_int64(
+            database,
+            "SELECT parser_version FROM project_files "
+            "WHERE project_id = 1 AND id = " + std::to_string(player_file_id) + ";"
+        ) == gotool::project_scanner::PARSER_VERSION
+    );
+
+    Statement reason = database.prepare(R"sql(
+        SELECT dirty_reason
+        FROM project_files
+        WHERE project_id = ?1
+          AND id = ?2
+          AND scan_generation = ?3
+        LIMIT 1;
+    )sql");
+    reason.bind_int64(1, 1);
+    reason.bind_int64(2, player_file_id);
+    reason.bind_int64(3, rescanned.scan_generation);
+    REQUIRE(reason.step() == Statement::StepResult::Row);
+    CHECK(reason.column_text(0) == "parser_version_changed");
 }
 
 TEST_CASE("native_scan_pipeline_reparses_when_scene_parser_version_changes") {
@@ -1104,6 +1461,259 @@ TEST_CASE("scan_repository_exposes_script_intelligence_and_scene_attachment_quer
     CHECK(summary.reference_count >= 1);
 }
 
+TEST_CASE("doc_comment_gaps_require_attached_docs_and_preserve_detached_diagnostics") {
+    TemporaryRoot root(make_temp_root("doc_comment_gap_semantics"));
+    TemporaryRoot db_root(make_temp_root("doc_comment_gap_semantics_db"));
+
+    write_text(root.path / "project.godot", "[application]\n");
+    write_text(
+        root.path / "scripts" / "docs_case.gd",
+        "class_name DocsCase\n"
+        "extends Node\n"
+        "\n"
+        "# detached comment should remain diagnostic-only\n"
+        "func undocumented() -> void:\n"
+        "    pass\n"
+        "\n"
+        "## attached docs\n"
+        "var documented: int = 1\n"
+    );
+
+    Database database((db_root.path / "scanner.sqlite3").string());
+    gotool::database::create_schema(database, 0);
+    database.exec(
+        "INSERT INTO projects ("
+        "id, project_uid, display_name, root_absolute_path, root_canonical_path, "
+        "project_file_absolute_path, godot_version, identity_source, first_seen_unix, last_seen_unix, "
+        "created_at_unix, updated_at_unix"
+        ") VALUES ("
+        "1, 'doc-gap-semantics', 'doc-gap-semantics', '" + root.path.generic_string() + "', '" +
+        root.path.generic_string() + "', '" + (root.path / "project.godot").generic_string() +
+        "', '4.6.0-stable', 'test', 1, 1, 1, 1"
+        ");"
+    );
+
+    NativeScanPipeline pipeline(database);
+    ScanOptions options;
+    options.project_id = 1;
+    options.project_root = root.path;
+    options.include_hidden = true;
+    options.persist_to_database = true;
+    options.collect_custom_classes = true;
+    options.collect_script_dependencies = true;
+    pipeline.run(options);
+
+    const int64_t script_file_id = query_int64(
+        database,
+        "SELECT id FROM project_files WHERE project_id = 1 AND project_relative_path = 'scripts/docs_case.gd' LIMIT 1;"
+    );
+
+    CHECK(
+        query_int64(
+            database,
+            "SELECT COUNT(*) FROM script_doc_comments "
+            "WHERE project_id = 1 AND script_file_id = " + std::to_string(script_file_id) +
+            " AND is_attached = 0;"
+        ) >= 1
+    );
+
+    ScanRepository repository(database);
+    gotool::project_scanner::DocCommentGapFilter filter;
+    filter.symbol_kind = "function";
+    const std::vector<gotool::project_scanner::ScriptSymbolRow> gaps =
+        repository.list_doc_comment_gaps(1, filter);
+
+    bool found_undocumented_function = false;
+    for (const auto &symbol : gaps) {
+        if (symbol.name == "undocumented") {
+            found_undocumented_function = true;
+            CHECK(symbol.doc_comment_state == "detached");
+        }
+    }
+
+    CHECK(found_undocumented_function);
+}
+
+TEST_CASE("reference_target_resolution_is_deterministic_with_duplicate_class_candidates") {
+    TemporaryRoot root(make_temp_root("reference_target_determinism"));
+    TemporaryRoot db_root(make_temp_root("reference_target_determinism_db"));
+
+    write_text(root.path / "project.godot", "[application]\n");
+    write_text(root.path / "scripts" / "a_shared.gd", "class_name Shared\nextends Node\n");
+    write_text(root.path / "scripts" / "z_shared.gd", "class_name Shared\nextends Node\n");
+    write_text(
+        root.path / "scripts" / "referrer.gd",
+        "class_name Referrer\n"
+        "extends Node\n"
+        "var target: Shared\n"
+    );
+
+    Database database((db_root.path / "scanner.sqlite3").string());
+    gotool::database::create_schema(database, 0);
+    database.exec(
+        "INSERT INTO projects ("
+        "id, project_uid, display_name, root_absolute_path, root_canonical_path, "
+        "project_file_absolute_path, godot_version, identity_source, first_seen_unix, last_seen_unix, "
+        "created_at_unix, updated_at_unix"
+        ") VALUES ("
+        "1, 'reference-target-determinism', 'reference-target-determinism', '" + root.path.generic_string() + "', '" +
+        root.path.generic_string() + "', '" + (root.path / "project.godot").generic_string() +
+        "', '4.6.0-stable', 'test', 1, 1, 1, 1"
+        ");"
+    );
+
+    NativeScanPipeline pipeline(database);
+    ScanOptions options;
+    options.project_id = 1;
+    options.project_root = root.path;
+    options.include_hidden = true;
+    options.persist_to_database = true;
+    options.collect_custom_classes = true;
+    options.collect_script_dependencies = true;
+
+    pipeline.run(options);
+
+    const int64_t referrer_file_id = query_int64(
+        database,
+        "SELECT id FROM project_files WHERE project_id = 1 AND project_relative_path = 'scripts/referrer.gd' LIMIT 1;"
+    );
+
+    auto resolve_shared_target_path = [&database, referrer_file_id]() -> std::string {
+        Statement statement = database.prepare(R"sql(
+            SELECT f.project_relative_path
+            FROM script_references r
+            JOIN project_files f ON f.id = r.target_file_id
+            WHERE r.project_id = ?1
+              AND r.source_script_file_id = ?2
+              AND r.target_class_name = 'Shared'
+              AND r.target_file_id IS NOT NULL
+            ORDER BY r.source_line ASC, r.source_column ASC, r.id ASC
+            LIMIT 1;
+        )sql");
+        statement.bind_int64(1, 1);
+        statement.bind_int64(2, referrer_file_id);
+        if (statement.step() != Statement::StepResult::Row) {
+            return "";
+        }
+        return statement.column_text(0);
+    };
+
+    const std::string first_target_path = resolve_shared_target_path();
+    REQUIRE_FALSE(first_target_path.empty());
+    CHECK(first_target_path == "scripts/a_shared.gd");
+
+    write_text(
+        root.path / "scripts" / "referrer.gd",
+        "class_name Referrer\n"
+        "extends Node\n"
+        "var target: Shared\n"
+        "# reparse touch\n"
+    );
+    pipeline.run(options);
+
+    const std::string second_target_path = resolve_shared_target_path();
+    CHECK(second_target_path == "scripts/a_shared.gd");
+}
+
+TEST_CASE("scene_attachment_unresolved_rows_are_preserved_and_deleted_scripts_invalidate_resolution") {
+    TemporaryRoot root(make_temp_root("scene_attachment_unresolved_preservation"));
+    TemporaryRoot db_root(make_temp_root("scene_attachment_unresolved_preservation_db"));
+
+    write_text(root.path / "project.godot", "[application]\n");
+    write_text(root.path / "scripts" / "player.gd", "class_name Player\nextends Node\n");
+    write_text(
+        root.path / "scenes" / "main.tscn",
+        "[gd_scene load_steps=2 format=3]\n"
+        "\n"
+        "[ext_resource type=\"Script\" uid=\"uid://player-script\" path=\"res://scripts/player.gd\" id=\"1_player\"]\n"
+        "\n"
+        "[node name=\"Root\" type=\"Node\"]\n"
+        "script = ExtResource(\"1_player\")\n"
+        "\n"
+        "[node name=\"DynamicNode\" type=\"Node\" parent=\".\"]\n"
+        "script = RuntimeLoader\n"
+    );
+
+    Database database((db_root.path / "scanner.sqlite3").string());
+    gotool::database::create_schema(database, 0);
+    database.exec(
+        "INSERT INTO projects ("
+        "id, project_uid, display_name, root_absolute_path, root_canonical_path, "
+        "project_file_absolute_path, godot_version, identity_source, first_seen_unix, last_seen_unix, "
+        "created_at_unix, updated_at_unix"
+        ") VALUES ("
+        "1, 'scene-attachment-unresolved', 'scene-attachment-unresolved', '" + root.path.generic_string() + "', '" +
+        root.path.generic_string() + "', '" + (root.path / "project.godot").generic_string() +
+        "', '4.6.0-stable', 'test', 1, 1, 1, 1"
+        ");"
+    );
+
+    NativeScanPipeline pipeline(database);
+    ScanOptions options;
+    options.project_id = 1;
+    options.project_root = root.path;
+    options.include_hidden = true;
+    options.persist_to_database = true;
+    options.collect_custom_classes = true;
+    options.collect_script_dependencies = true;
+
+    pipeline.run(options);
+
+    const int64_t scene_file_id = query_int64(
+        database,
+        "SELECT id FROM project_files WHERE project_id = 1 AND project_relative_path = 'scenes/main.tscn' LIMIT 1;"
+    );
+
+    ScanRepository repository(database);
+    const std::vector<gotool::project_scanner::SceneScriptAttachmentRow> first_rows =
+        repository.list_scripts_attached_to_scene(1, scene_file_id);
+    REQUIRE(first_rows.size() >= 2);
+
+    bool found_resolved_ext = false;
+    bool found_dynamic_unresolved = false;
+    for (const auto &row : first_rows) {
+        if (row.node_name == "Root") {
+            found_resolved_ext = true;
+            CHECK(row.is_resolved);
+            CHECK(row.script_file_id.has_value());
+            CHECK(row.script_project_relative_path == "scripts/player.gd");
+        }
+        if (row.node_name == "DynamicNode") {
+            found_dynamic_unresolved = true;
+            CHECK(row.is_dynamic);
+            CHECK_FALSE(row.is_resolved);
+            CHECK_FALSE(row.script_file_id.has_value());
+        }
+    }
+    CHECK(found_resolved_ext);
+    CHECK(found_dynamic_unresolved);
+
+    std::filesystem::remove(root.path / "scripts" / "player.gd");
+    pipeline.run(options);
+
+    const std::vector<gotool::project_scanner::SceneScriptAttachmentRow> second_rows =
+        repository.list_scripts_attached_to_scene(1, scene_file_id);
+    REQUIRE(second_rows.size() >= 2);
+
+    bool found_invalidated_ext = false;
+    bool dynamic_still_present = false;
+    for (const auto &row : second_rows) {
+        if (row.node_name == "Root") {
+            found_invalidated_ext = true;
+            CHECK_FALSE(row.is_resolved);
+            CHECK_FALSE(row.script_file_id.has_value());
+            CHECK(row.script_project_relative_path == "scripts/player.gd");
+        }
+        if (row.node_name == "DynamicNode") {
+            dynamic_still_present = true;
+            CHECK(row.is_dynamic);
+            CHECK_FALSE(row.is_resolved);
+        }
+    }
+    CHECK(found_invalidated_ext);
+    CHECK(dynamic_still_present);
+}
+
 TEST_CASE("scanner_dependency_graph_delete_replace_and_resolution_behaviour") {
     TemporaryRoot root(make_temp_root("scanner_dependency_graph"));
     TemporaryRoot db_root(make_temp_root("scanner_dependency_graph_db"));
@@ -1172,6 +1782,32 @@ TEST_CASE("scanner_dependency_graph_delete_replace_and_resolution_behaviour") {
             " AND target_class_name = 'Enemy' "
             "AND target_file_id = " + std::to_string(enemy_id) +
             " AND is_resolved = 1;"
+        ) >= 1
+    );
+
+    CHECK(
+        query_int64(
+            database,
+            "SELECT COUNT(*) "
+            "FROM script_dependencies d "
+            "JOIN script_symbols s ON s.id = d.source_symbol_id "
+            "WHERE d.project_id = 1 "
+            "  AND d.source_script_file_id = " + std::to_string(spawner_id) +
+            "  AND d.dependency_kind = 'typed_var_ref' "
+            "  AND s.symbol_kind = 'property';"
+        ) >= 1
+    );
+
+    CHECK(
+        query_int64(
+            database,
+            "SELECT COUNT(*) "
+            "FROM script_dependencies d "
+            "JOIN script_symbols s ON s.id = d.source_symbol_id "
+            "WHERE d.project_id = 1 "
+            "  AND d.source_script_file_id = " + std::to_string(spawner_id) +
+            "  AND d.dependency_kind = 'new_class_instantiation' "
+            "  AND s.symbol_kind = 'function';"
         ) >= 1
     );
 

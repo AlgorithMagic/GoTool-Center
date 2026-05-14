@@ -190,10 +190,10 @@ ScriptParseResult parse_script_intelligence(
     const std::filesystem::path &absolute_path,
     std::string_view extension,
     ParseTier parse_tier = ParseTier::FullSymbols,
-    int64_t max_lines = 240,
-    int64_t max_bytes = 64 * 1024,
-    int64_t max_tokens = 16 * 1024,
-    int64_t max_dependencies = 2 * 1024
+    int64_t max_lines = -1,
+    int64_t max_bytes = -1,
+    int64_t max_tokens = -1,
+    int64_t max_dependencies = -1
 );
 
 ScriptParseResult parse_script_header(
@@ -207,8 +207,8 @@ ScriptParseResult parse_script_header(
 
 SceneParseResult parse_scene_attachments(
     const std::filesystem::path &absolute_path,
-    int64_t max_lines = 2048,
-    int64_t max_bytes = 256 * 1024
+    int64_t max_lines = -1,
+    int64_t max_bytes = -1
 );
 
 } // namespace gotool::project_scanner

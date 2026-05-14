@@ -1,0 +1,264 @@
+===============================================================================
+tests\native\scanner_benchmark.cpp(233):
+TEST CASE:  scanner_benchmark_json_includes_dependency_metric_fields
+
+0.000043 s: scanner_benchmark_json_includes_dependency_metric_fields
+===============================================================================
+tests\native\scanner_benchmark.cpp(255):
+TEST CASE:  scanner_benchmark_synthetic_large_project [benchmark][.]
+
+0.000021 s: scanner_benchmark_synthetic_large_project [benchmark][.]
+===============================================================================
+tests\native\scanner_native_tests.cpp(133):
+TEST CASE:  path_normalization_uses_project_relative_forward_slashes
+
+0.000023 s: path_normalization_uses_project_relative_forward_slashes
+===============================================================================
+tests\native\scanner_native_tests.cpp(139):
+TEST CASE:  skip_policy_excludes_gotool_addon_and_cache_paths
+
+0.000026 s: skip_policy_excludes_gotool_addon_and_cache_paths
+===============================================================================
+tests\native\scanner_native_tests.cpp(148):
+TEST CASE:  skip_policy_supports_external_and_normalized_path_modes
+
+0.000022 s: skip_policy_supports_external_and_normalized_path_modes
+===============================================================================
+tests\native\scanner_native_tests.cpp(157):
+TEST CASE:  extension_extraction_and_classification_are_cheap
+
+0.000026 s: extension_extraction_and_classification_are_cheap
+===============================================================================
+tests\native\scanner_native_tests.cpp(165):
+TEST CASE:  extension_classification_handles_metadata_and_source_artifacts
+
+0.000040 s: extension_classification_handles_metadata_and_source_artifacts
+===============================================================================
+tests\native\scanner_native_tests.cpp(184):
+TEST CASE:  extension_dispatch_from_facts_matches_wrapper_classification
+
+0.000031 s: extension_dispatch_from_facts_matches_wrapper_classification
+===============================================================================
+tests\native\scanner_native_tests.cpp(226):
+TEST CASE:  dirty_detector_reports_clean_and_metadata_changes
+
+0.000020 s: dirty_detector_reports_clean_and_metadata_changes
+===============================================================================
+tests\native\scanner_native_tests.cpp(294):
+TEST CASE:  dirty_detector_honors_parser_and_classifier_versions
+
+0.000018 s: dirty_detector_honors_parser_and_classifier_versions
+===============================================================================
+tests\native\scanner_native_tests.cpp(339):
+TEST CASE:  gdscript_parser_detects_class_name_and_extends
+
+0.003073 s: gdscript_parser_detects_class_name_and_extends
+===============================================================================
+tests\native\scanner_native_tests.cpp(358):
+TEST CASE:  csharp_parser_detects_global_class_and_base_type
+
+0.002737 s: csharp_parser_detects_global_class_and_base_type
+===============================================================================
+tests\native\scanner_native_tests.cpp(378):
+TEST CASE:  gdscript_parser_extracts_dependency_patterns
+
+0.002369 s: gdscript_parser_extracts_dependency_patterns
+===============================================================================
+tests\native\scanner_native_tests.cpp(422):
+TEST CASE:  gdscript_parser_ignores_comments_and_handles_escaped_and_multiline_strings
+
+0.003624 s: gdscript_parser_ignores_comments_and_handles_escaped_and_multiline_strings
+===============================================================================
+tests\native\scanner_native_tests.cpp(446):
+TEST CASE:  csharp_parser_extracts_globalclass_load_and_export_dependencies
+
+0.002772 s: csharp_parser_extracts_globalclass_load_and_export_dependencies
+===============================================================================
+tests\native\scanner_native_tests.cpp(482):
+TEST CASE:  script_parser_limits_are_enforced_without_throwing
+
+0.002829 s: script_parser_limits_are_enforced_without_throwing
+===============================================================================
+tests\native\scanner_native_tests.cpp(505):
+TEST CASE:  parse_tier_policy_defaults_keep_header_fast_small_and_full_symbols_high_cap
+
+0.042682 s: parse_tier_policy_defaults_keep_header_fast_small_and_full_symbols_high_cap
+===============================================================================
+tests\native\scanner_native_tests.cpp(537):
+TEST CASE:  scene_attachment_parser_default_policy_handles_large_scene_files
+
+0.015969 s: scene_attachment_parser_default_policy_handles_large_scene_files
+===============================================================================
+tests\native\scanner_native_tests.cpp(560):
+TEST CASE:  scan_pipeline_records_tiered_limit_metrics_and_persists_parser_incomplete_flags
+
+0.179508 s: scan_pipeline_records_tiered_limit_metrics_and_persists_parser_incomplete_flags
+===============================================================================
+tests\native\scanner_native_tests.cpp(652):
+TEST CASE:  scan_repository_reference_queries_are_deterministically_ordered
+
+0.023887 s: scan_repository_reference_queries_are_deterministically_ordered
+===============================================================================
+tests\native\scanner_native_tests.cpp(722):
+TEST CASE:  script_parser_handles_large_synthetic_script_throughput
+
+0.048652 s: script_parser_handles_large_synthetic_script_throughput
+===============================================================================
+tests\native\scanner_native_tests.cpp(748):
+TEST CASE:  malformed_script_reports_no_class_without_throwing
+
+0.003126 s: malformed_script_reports_no_class_without_throwing
+===============================================================================
+tests\native\scanner_native_tests.cpp(760):
+TEST CASE:  script_intelligence_parser_extracts_symbols_docs_and_references
+
+0.003842 s: script_intelligence_parser_extracts_symbols_docs_and_references
+===============================================================================
+tests\native\scanner_native_tests.cpp(855):
+TEST CASE:  script_intelligence_reference_source_scopes_to_nearest_enclosing_symbol
+
+0.002917 s: script_intelligence_reference_source_scopes_to_nearest_enclosing_symbol
+===============================================================================
+tests\native\scanner_native_tests.cpp(911):
+TEST CASE:  scene_attachment_parser_extracts_external_resources_and_script_bindings
+
+0.005037 s: scene_attachment_parser_extracts_external_resources_and_script_bindings
+===============================================================================
+tests\native\scanner_native_tests.cpp(950):
+TEST CASE:  path_arena_stores_offsets_without_godot_strings
+
+0.000020 s: path_arena_stores_offsets_without_godot_strings
+===============================================================================
+tests\native\scanner_native_tests.cpp(957):
+TEST CASE:  path_arena_reserve_is_stable_for_hot_path_appends
+
+0.000018 s: path_arena_reserve_is_stable_for_hot_path_appends
+===============================================================================
+tests\native\scanner_native_tests.cpp(971):
+TEST CASE:  platform_file_identity_serialization_is_stable
+
+0.000020 s: platform_file_identity_serialization_is_stable
+===============================================================================
+tests\native\scanner_native_tests.cpp(983):
+TEST CASE:  scanner_schema_v3_supports_batched_writes_tombstones_and_paging
+
+0.045083 s: scanner_schema_v3_supports_batched_writes_tombstones_and_paging
+===============================================================================
+tests\native\scanner_native_tests.cpp(1074):
+TEST CASE:  native_scan_pipeline_reparses_when_dependency_parser_version_changes
+
+0.027950 s: native_scan_pipeline_reparses_when_dependency_parser_version_changes
+===============================================================================
+tests\native\scanner_native_tests.cpp(1157):
+TEST CASE:  native_scan_pipeline_reparses_when_parser_version_changes
+
+0.028278 s: native_scan_pipeline_reparses_when_parser_version_changes
+===============================================================================
+tests\native\scanner_native_tests.cpp(1236):
+TEST CASE:  native_scan_pipeline_reparses_when_scene_parser_version_changes
+
+0.027862 s: native_scan_pipeline_reparses_when_scene_parser_version_changes
+===============================================================================
+tests\native\scanner_native_tests.cpp(1330):
+TEST CASE:  scan_repository_exposes_script_intelligence_and_scene_attachment_queries
+
+0.025012 s: scan_repository_exposes_script_intelligence_and_scene_attachment_queries
+===============================================================================
+tests\native\scanner_native_tests.cpp(1464):
+TEST CASE:  doc_comment_gaps_require_attached_docs_and_preserve_detached_diagnostics
+
+0.021938 s: doc_comment_gaps_require_attached_docs_and_preserve_detached_diagnostics
+===============================================================================
+tests\native\scanner_native_tests.cpp(1537):
+TEST CASE:  reference_target_resolution_is_deterministic_with_duplicate_class_candidates
+
+0.031382 s: reference_target_resolution_is_deterministic_with_duplicate_class_candidates
+===============================================================================
+tests\native\scanner_native_tests.cpp(1618):
+TEST CASE:  scene_attachment_unresolved_rows_are_preserved_and_deleted_scripts_invalidate_resolution
+
+0.027209 s: scene_attachment_unresolved_rows_are_preserved_and_deleted_scripts_invalidate_resolution
+===============================================================================
+tests\native\scanner_native_tests.cpp(1717):
+TEST CASE:  scanner_dependency_graph_delete_replace_and_resolution_behaviour
+
+0.052877 s: scanner_dependency_graph_delete_replace_and_resolution_behaviour
+===============================================================================
+tests\native\scanner_native_tests.cpp(1907):
+TEST CASE:  native_directory_enumerator_stops_when_cancel_already_requested
+
+0.002694 s: native_directory_enumerator_stops_when_cancel_already_requested
+===============================================================================
+tests\native\scanner_native_tests.cpp(1926):
+TEST CASE:  native_scan_pipeline_reports_cancelled_before_enumeration_and_keeps_db_clean
+
+0.018185 s: native_scan_pipeline_reports_cancelled_before_enumeration_and_keeps_db_clean
+===============================================================================
+tests\native\scanner_native_tests.cpp(1961):
+TEST CASE:  native_scan_pipeline_no_db_mode_returns_records_without_db_writes
+
+0.016787 s: native_scan_pipeline_no_db_mode_returns_records_without_db_writes
+===============================================================================
+tests\native\scanner_native_tests.cpp(1996):
+TEST CASE:  native_scan_pipeline_can_skip_existing_snapshot_load_for_benchmark_paths
+
+0.022678 s: native_scan_pipeline_can_skip_existing_snapshot_load_for_benchmark_paths
+===============================================================================
+tests\native\scanner_native_tests.cpp(2035):
+TEST CASE:  native_scan_pipeline_dirty_path_filter_limits_script_reparse_scope
+
+0.023848 s: native_scan_pipeline_dirty_path_filter_limits_script_reparse_scope
+===============================================================================
+tests\native\scanner_native_tests.cpp(2081):
+TEST CASE:  native_directory_enumerator_parallel_mode_preserves_deterministic_path_set
+
+0.136623 s: native_directory_enumerator_parallel_mode_preserves_deterministic_path_set
+===============================================================================
+tests\native\schema_v2_tests.cpp(114):
+TEST CASE:  schema_v2_creation_is_idempotent
+
+0.017244 s: schema_v2_creation_is_idempotent
+===============================================================================
+tests\native\schema_v2_tests.cpp(130):
+TEST CASE:  schema_v8_script_intelligence_tables_and_metrics_columns_exist
+
+0.018403 s: schema_v8_script_intelligence_tables_and_metrics_columns_exist
+===============================================================================
+tests\native\schema_v2_tests.cpp(268):
+TEST CASE:  schema_v6_like_tables_migrate_to_v7_columns_and_preserve_data
+
+0.023958 s: schema_v6_like_tables_migrate_to_v7_columns_and_preserve_data
+===============================================================================
+tests\native\schema_v2_tests.cpp(496):
+TEST CASE:  same_relative_path_can_exist_across_multiple_projects
+
+0.016318 s: same_relative_path_can_exist_across_multiple_projects
+===============================================================================
+tests\native\schema_v2_tests.cpp(573):
+TEST CASE:  cleanup_queries_are_scoped_by_project_id
+
+0.017300 s: cleanup_queries_are_scoped_by_project_id
+===============================================================================
+tests\native\schema_v2_tests.cpp(688):
+TEST CASE:  register_project_updates_moved_root_without_duplicate_rows
+
+0.015029 s: register_project_updates_moved_root_without_duplicate_rows
+===============================================================================
+tests\native\schema_v2_tests.cpp(722):
+TEST CASE:  register_project_rejects_canonical_path_uid_conflict
+
+0.015324 s: register_project_rejects_canonical_path_uid_conflict
+===============================================================================
+tests\native\schema_v2_tests.cpp(749):
+TEST CASE:  legacy_v1_schema_migrates_into_registered_project_scope
+
+0.015285 s: legacy_v1_schema_migrates_into_registered_project_scope
+===============================================================================
+tests\native\schema_v2_tests.cpp(912):
+TEST CASE:  project_registry_normalizes_stored_paths
+
+0.014855 s: project_registry_normalizes_stored_paths
+===============================================================================
+[doctest] test cases:  52 |  52 passed | 0 failed | 0 skipped
+[doctest] assertions: 542 | 542 passed | 0 failed |
+[doctest] Status: SUCCESS!

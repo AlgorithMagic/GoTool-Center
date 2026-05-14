@@ -1,0 +1,10 @@
+scons: Reading SConscript files ...
+Auto-detected 16 CPU cores available for build parallelism. Using 15 cores by default. You can override it with the -j argument.
+Building for architecture x86_64 on platform windows
+scons: done reading SConscript files.
+scons: Building targets ...
+scons: `godot-cpp\bin\libgodot-cpp.windows.template_release.x86_64.lib' is up to date.
+scons: `project\addons\GoToolCenter\bin\libgotool_center.windows.template_release.x86_64.dll' is up to date.
+scons: `build\tests\windows\template_release\x86_64\gotool_native_tests.exe' is up to date.
+Building compilation database compile_commands.json
+scons: done building targets.

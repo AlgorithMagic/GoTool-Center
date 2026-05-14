@@ -127,7 +127,7 @@ TEST_CASE("schema_v2_creation_is_idempotent") {
     CHECK(table_has_column(database, "project_scan_unknowns", "project_id"));
 }
 
-TEST_CASE("schema_v7_script_intelligence_tables_and_metrics_columns_exist") {
+TEST_CASE("schema_v8_script_intelligence_tables_and_metrics_columns_exist") {
     TemporaryDatabaseFile temp_db(make_temp_database_path("schema_v7_script_intelligence"));
 
     Database database(temp_db.path.string());
@@ -237,6 +237,9 @@ TEST_CASE("schema_v7_script_intelligence_tables_and_metrics_columns_exist") {
     CHECK(table_has_column(database, "scan_metrics", "parser_lines_scanned"));
     CHECK(table_has_column(database, "scan_metrics", "parser_tokens_generated"));
     CHECK(table_has_column(database, "scan_metrics", "parser_limit_exceeded_count"));
+    CHECK(table_has_column(database, "scan_metrics", "parser_limit_exceeded_header_fast_count"));
+    CHECK(table_has_column(database, "scan_metrics", "parser_limit_exceeded_full_symbols_count"));
+    CHECK(table_has_column(database, "scan_metrics", "parser_limit_exceeded_scene_attachments_count"));
 
     CHECK(index_exists(database, "idx_project_files_project_id_scene_parser_version"));
     CHECK(index_exists(database, "idx_script_symbols_project_id_name"));

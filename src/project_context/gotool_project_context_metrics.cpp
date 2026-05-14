@@ -68,6 +68,12 @@ metrics_to_dictionary(const gotool::project_scanner::ScanMetrics &metrics) {
   result["parser_bytes_read"] = metrics.parser_bytes_read;
   result["parser_tokens_generated"] = metrics.parser_tokens_generated;
   result["parser_limit_exceeded_count"] = metrics.parser_limit_exceeded_count;
+    result["parser_limit_exceeded_header_fast_count"] =
+      metrics.parser_limit_exceeded_header_fast_count;
+    result["parser_limit_exceeded_full_symbols_count"] =
+      metrics.parser_limit_exceeded_full_symbols_count;
+    result["parser_limit_exceeded_scene_attachments_count"] =
+      metrics.parser_limit_exceeded_scene_attachments_count;
   result["symbol_rows_created"] = metrics.symbol_rows_created;
   result["reference_rows_created"] = metrics.reference_rows_created;
   result["doc_comment_rows_created"] = metrics.doc_comment_rows_created;
