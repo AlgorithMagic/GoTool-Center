@@ -14,8 +14,9 @@ using ScanGeneration = int64_t;
 
 static constexpr int64_t PARSER_VERSION = 2;
 static constexpr int64_t DEPENDENCY_PARSER_VERSION = 1;
+static constexpr int64_t SCENE_PARSER_VERSION = 1;
 static constexpr int64_t CLASSIFIER_VERSION = 2;
-static constexpr int64_t SCANNER_SCHEMA_VERSION = 5;
+static constexpr int64_t SCANNER_SCHEMA_VERSION = 7;
 
 enum class EntryKind : uint8_t {
     File = 0,
@@ -203,6 +204,7 @@ enum class DirtyReason : uint16_t {
     FileIdentityChanged,
     ParserVersionChanged,
     DependencyParserVersionChanged,
+    SceneParserVersionChanged,
     ClassifierVersionChanged,
     PriorParseFailedRetry,
     WatcherInvalidated,
@@ -259,6 +261,9 @@ struct ScanMetrics {
     int64_t classification_ms = 0;
     int64_t script_parse_ms = 0;
     int64_t dependency_parse_ms = 0;
+    int64_t full_symbol_parse_ms = 0;
+    int64_t doc_comment_parse_ms = 0;
+    int64_t scene_attachment_parse_ms = 0;
     int64_t tokenizer_ms = 0;
     int64_t sqlite_write_ms = 0;
     int64_t sqlite_stage_insert_ms = 0;
@@ -287,6 +292,8 @@ struct ScanMetrics {
     int64_t scripts_candidates = 0;
     int64_t scripts_parsed = 0;
     int64_t scripts_skipped_clean = 0;
+    int64_t symbols_skipped_clean = 0;
+    int64_t scenes_skipped_clean = 0;
     int64_t scripts_dependency_parsed = 0;
     int64_t scripts_dependency_skipped_clean = 0;
     int64_t script_lines_scanned = 0;
@@ -295,6 +302,10 @@ struct ScanMetrics {
     int64_t parser_bytes_read = 0;
     int64_t parser_tokens_generated = 0;
     int64_t parser_limit_exceeded_count = 0;
+    int64_t symbol_rows_created = 0;
+    int64_t reference_rows_created = 0;
+    int64_t doc_comment_rows_created = 0;
+    int64_t scene_attachment_rows_created = 0;
     int64_t dependency_records_created = 0;
     int64_t unresolved_dependency_count = 0;
     int64_t dynamic_dependency_count = 0;
@@ -356,6 +367,7 @@ struct ExistingEntrySnapshot {
     std::string platform_file_id;
     int64_t parser_version = PARSER_VERSION;
     int64_t dependency_parser_version = DEPENDENCY_PARSER_VERSION;
+    int64_t scene_parser_version = SCENE_PARSER_VERSION;
     int64_t classifier_version = CLASSIFIER_VERSION;
     ParseStatus parse_status = ParseStatus::NotParsed;
 };

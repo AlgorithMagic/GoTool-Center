@@ -134,6 +134,7 @@ void create_schema_v2_tables(Database &database) {
             dirty_reason TEXT NOT NULL DEFAULT 'new_path',
             parser_version INTEGER NOT NULL DEFAULT 1,
             dependency_parser_version INTEGER NOT NULL DEFAULT 1,
+            scene_parser_version INTEGER NOT NULL DEFAULT 1,
             classifier_version INTEGER NOT NULL DEFAULT 1,
             parse_status TEXT NOT NULL DEFAULT 'not_parsed',
             is_deleted INTEGER NOT NULL DEFAULT 0,
@@ -218,20 +219,42 @@ void create_schema_v2_tables(Database &database) {
             id INTEGER PRIMARY KEY,
             project_id INTEGER NOT NULL,
             script_file_id INTEGER NOT NULL,
-            class_name TEXT NOT NULL,
+            symbol_slot INTEGER NOT NULL DEFAULT 0,
+            parent_symbol_slot INTEGER,
+            parent_symbol_id INTEGER,
+            symbol_kind TEXT NOT NULL DEFAULT 'unknown',
+            name TEXT NOT NULL DEFAULT '',
+            qualified_name TEXT NOT NULL DEFAULT '',
+            declared_type TEXT NOT NULL DEFAULT '',
+            return_type TEXT NOT NULL DEFAULT '',
+            default_value_excerpt TEXT NOT NULL DEFAULT '',
+            visibility TEXT NOT NULL DEFAULT '',
+            flags INTEGER NOT NULL DEFAULT 0,
+            doc_comment_state TEXT NOT NULL DEFAULT 'none',
+            symbol_name TEXT NOT NULL DEFAULT '',
+            class_name TEXT NOT NULL DEFAULT '',
             language TEXT NOT NULL DEFAULT '',
+            signature_text TEXT NOT NULL DEFAULT '',
+            symbol_flags INTEGER NOT NULL DEFAULT 0,
+            line_start INTEGER NOT NULL DEFAULT 0,
+            column_start INTEGER NOT NULL DEFAULT 0,
+            line_end INTEGER NOT NULL DEFAULT 0,
+            column_end INTEGER NOT NULL DEFAULT 0,
             parser_version INTEGER NOT NULL DEFAULT 1,
             last_parsed_generation INTEGER NOT NULL DEFAULT 0,
             last_seen_scan_run_id INTEGER,
             created_at_unix INTEGER NOT NULL DEFAULT 0,
             updated_at_unix INTEGER NOT NULL DEFAULT 0,
-            UNIQUE(project_id, script_file_id),
+            UNIQUE(project_id, script_file_id, symbol_slot),
             FOREIGN KEY (project_id)
                 REFERENCES projects(id)
                 ON DELETE CASCADE,
             FOREIGN KEY (script_file_id)
                 REFERENCES project_files(id)
                 ON DELETE CASCADE,
+            FOREIGN KEY (parent_symbol_id)
+                REFERENCES script_symbols(id)
+                ON DELETE SET NULL,
             FOREIGN KEY (last_seen_scan_run_id)
                 REFERENCES project_scan_runs(id)
                 ON DELETE SET NULL
@@ -298,6 +321,163 @@ void create_schema_v2_tables(Database &database) {
     )sql");
 
     database.exec(R"sql(
+        CREATE TABLE IF NOT EXISTS script_references (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER NOT NULL,
+            script_file_id INTEGER NOT NULL,
+            source_script_file_id INTEGER NOT NULL,
+            source_symbol_id INTEGER,
+            target_file_id INTEGER,
+            target_symbol_id INTEGER,
+            target_project_relative_path TEXT,
+            target_class_name TEXT,
+            target_symbol_name TEXT,
+            target_resource_uid TEXT,
+            reference_kind TEXT NOT NULL DEFAULT 'unknown',
+            reference_text TEXT NOT NULL DEFAULT '',
+            source_line INTEGER NOT NULL DEFAULT 0,
+            source_column INTEGER NOT NULL DEFAULT 0,
+            source_line_end INTEGER NOT NULL DEFAULT 0,
+            source_column_end INTEGER NOT NULL DEFAULT 0,
+            confidence REAL NOT NULL DEFAULT 0,
+            is_dynamic INTEGER NOT NULL DEFAULT 0,
+            is_resolved INTEGER NOT NULL DEFAULT 0,
+            is_unresolved INTEGER NOT NULL DEFAULT 0,
+            parser_version INTEGER NOT NULL DEFAULT 1,
+            scan_generation INTEGER NOT NULL DEFAULT 0,
+            created_at_unix INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (project_id)
+                REFERENCES projects(id)
+                ON DELETE CASCADE,
+            FOREIGN KEY (script_file_id)
+                REFERENCES project_files(id)
+                ON DELETE CASCADE,
+            FOREIGN KEY (source_script_file_id)
+                REFERENCES project_files(id)
+                ON DELETE CASCADE,
+            FOREIGN KEY (source_symbol_id)
+                REFERENCES script_symbols(id)
+                ON DELETE SET NULL,
+            FOREIGN KEY (target_file_id)
+                REFERENCES project_files(id)
+                ON DELETE SET NULL,
+            FOREIGN KEY (target_symbol_id)
+                REFERENCES script_symbols(id)
+                ON DELETE SET NULL
+        );
+    )sql");
+
+    database.exec(R"sql(
+        CREATE TABLE IF NOT EXISTS script_doc_comments (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER NOT NULL,
+            script_file_id INTEGER NOT NULL,
+            target_symbol_id INTEGER,
+            target_kind TEXT NOT NULL DEFAULT '',
+            symbol_id INTEGER,
+            comment_style TEXT NOT NULL DEFAULT '',
+            text_hash TEXT NOT NULL DEFAULT '',
+            text_excerpt TEXT NOT NULL DEFAULT '',
+            comment_text TEXT NOT NULL DEFAULT '',
+            summary_text TEXT NOT NULL DEFAULT '',
+            start_line INTEGER NOT NULL DEFAULT 0,
+            end_line INTEGER NOT NULL DEFAULT 0,
+            is_attached INTEGER NOT NULL DEFAULT 0,
+            line_start INTEGER NOT NULL DEFAULT 0,
+            column_start INTEGER NOT NULL DEFAULT 0,
+            line_end INTEGER NOT NULL DEFAULT 0,
+            column_end INTEGER NOT NULL DEFAULT 0,
+            parser_version INTEGER NOT NULL DEFAULT 1,
+            scan_generation INTEGER NOT NULL DEFAULT 0,
+            created_at_unix INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (project_id)
+                REFERENCES projects(id)
+                ON DELETE CASCADE,
+            FOREIGN KEY (script_file_id)
+                REFERENCES project_files(id)
+                ON DELETE CASCADE,
+            FOREIGN KEY (target_symbol_id)
+                REFERENCES script_symbols(id)
+                ON DELETE SET NULL,
+            FOREIGN KEY (symbol_id)
+                REFERENCES script_symbols(id)
+                ON DELETE SET NULL
+        );
+    )sql");
+
+    database.exec(R"sql(
+        CREATE TABLE IF NOT EXISTS scene_external_resources (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER NOT NULL,
+            scene_file_id INTEGER NOT NULL,
+            ext_resource_id TEXT NOT NULL DEFAULT '',
+            resource_slot TEXT NOT NULL DEFAULT '',
+            resource_type TEXT NOT NULL DEFAULT '',
+            resource_path TEXT NOT NULL DEFAULT '',
+            resource_uid TEXT NOT NULL DEFAULT '',
+            target_file_id INTEGER,
+            is_script_resource INTEGER NOT NULL DEFAULT 0,
+            is_resolved INTEGER NOT NULL DEFAULT 0,
+            source_line INTEGER NOT NULL DEFAULT 0,
+            source_column INTEGER NOT NULL DEFAULT 0,
+            scene_parser_version INTEGER NOT NULL DEFAULT 1,
+            parser_version INTEGER NOT NULL DEFAULT 1,
+            scan_generation INTEGER NOT NULL DEFAULT 0,
+            created_at_unix INTEGER NOT NULL DEFAULT 0,
+            UNIQUE(project_id, scene_file_id, resource_slot),
+            FOREIGN KEY (project_id)
+                REFERENCES projects(id)
+                ON DELETE CASCADE,
+            FOREIGN KEY (scene_file_id)
+                REFERENCES project_files(id)
+                ON DELETE CASCADE,
+            FOREIGN KEY (target_file_id)
+                REFERENCES project_files(id)
+                ON DELETE SET NULL
+        );
+    )sql");
+
+    database.exec(R"sql(
+        CREATE TABLE IF NOT EXISTS scene_script_attachments (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER NOT NULL,
+            scene_file_id INTEGER NOT NULL,
+            node_path TEXT NOT NULL DEFAULT '',
+            node_name TEXT NOT NULL DEFAULT '',
+            node_type TEXT NOT NULL DEFAULT '',
+            attachment_kind TEXT NOT NULL DEFAULT 'unknown',
+            ext_resource_id TEXT NOT NULL DEFAULT '',
+            ext_resource_slot TEXT NOT NULL DEFAULT '',
+            script_resource_path TEXT NOT NULL DEFAULT '',
+            script_uid TEXT NOT NULL DEFAULT '',
+            script_project_relative_path TEXT NOT NULL DEFAULT '',
+            script_resource_uid TEXT NOT NULL DEFAULT '',
+            script_file_id INTEGER,
+            script_symbol_id INTEGER,
+            is_dynamic INTEGER NOT NULL DEFAULT 0,
+            is_resolved INTEGER NOT NULL DEFAULT 0,
+            source_line INTEGER NOT NULL DEFAULT 0,
+            source_column INTEGER NOT NULL DEFAULT 0,
+            scene_parser_version INTEGER NOT NULL DEFAULT 1,
+            parser_version INTEGER NOT NULL DEFAULT 1,
+            scan_generation INTEGER NOT NULL DEFAULT 0,
+            created_at_unix INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (project_id)
+                REFERENCES projects(id)
+                ON DELETE CASCADE,
+            FOREIGN KEY (scene_file_id)
+                REFERENCES project_files(id)
+                ON DELETE CASCADE,
+            FOREIGN KEY (script_file_id)
+                REFERENCES project_files(id)
+                ON DELETE SET NULL,
+            FOREIGN KEY (script_symbol_id)
+                REFERENCES script_symbols(id)
+                ON DELETE SET NULL
+        );
+    )sql");
+
+    database.exec(R"sql(
         CREATE TABLE IF NOT EXISTS project_scan_unknowns (
             id INTEGER PRIMARY KEY,
             project_id INTEGER NOT NULL,
@@ -342,6 +522,9 @@ void create_schema_v2_tables(Database &database) {
             classification_ms INTEGER NOT NULL DEFAULT 0,
             script_parse_ms INTEGER NOT NULL DEFAULT 0,
             dependency_parse_ms INTEGER NOT NULL DEFAULT 0,
+            full_symbol_parse_ms INTEGER NOT NULL DEFAULT 0,
+            doc_comment_parse_ms INTEGER NOT NULL DEFAULT 0,
+            scene_attachment_parse_ms INTEGER NOT NULL DEFAULT 0,
             tokenizer_ms INTEGER NOT NULL DEFAULT 0,
             sqlite_write_ms INTEGER NOT NULL DEFAULT 0,
             sqlite_stage_insert_ms INTEGER NOT NULL DEFAULT 0,
@@ -370,6 +553,8 @@ void create_schema_v2_tables(Database &database) {
             scripts_candidates INTEGER NOT NULL DEFAULT 0,
             scripts_parsed INTEGER NOT NULL DEFAULT 0,
             scripts_skipped_clean INTEGER NOT NULL DEFAULT 0,
+            symbols_skipped_clean INTEGER NOT NULL DEFAULT 0,
+            scenes_skipped_clean INTEGER NOT NULL DEFAULT 0,
             scripts_dependency_parsed INTEGER NOT NULL DEFAULT 0,
             scripts_dependency_skipped_clean INTEGER NOT NULL DEFAULT 0,
             script_lines_scanned INTEGER NOT NULL DEFAULT 0,
@@ -378,6 +563,10 @@ void create_schema_v2_tables(Database &database) {
             parser_bytes_read INTEGER NOT NULL DEFAULT 0,
             parser_tokens_generated INTEGER NOT NULL DEFAULT 0,
             parser_limit_exceeded_count INTEGER NOT NULL DEFAULT 0,
+            symbol_rows_created INTEGER NOT NULL DEFAULT 0,
+            reference_rows_created INTEGER NOT NULL DEFAULT 0,
+            doc_comment_rows_created INTEGER NOT NULL DEFAULT 0,
+            scene_attachment_rows_created INTEGER NOT NULL DEFAULT 0,
             dependency_records_created INTEGER NOT NULL DEFAULT 0,
             unresolved_dependency_count INTEGER NOT NULL DEFAULT 0,
             dynamic_dependency_count INTEGER NOT NULL DEFAULT 0,
@@ -501,6 +690,11 @@ void create_schema_v2_indexes(Database &database) {
     )sql");
 
     database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_project_files_project_id_scene_parser_version
+        ON project_files(project_id, scene_parser_version);
+    )sql");
+
+    database.exec(R"sql(
         CREATE INDEX IF NOT EXISTS idx_project_autoloads_project_id_target_project_relative_path
         ON project_autoloads(project_id, target_project_relative_path);
     )sql");
@@ -526,6 +720,31 @@ void create_schema_v2_indexes(Database &database) {
     )sql");
 
     database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_script_symbols_project_id_script_file_id
+        ON script_symbols(project_id, script_file_id);
+    )sql");
+
+    database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_script_symbols_project_id_name
+        ON script_symbols(project_id, name);
+    )sql");
+
+    database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_script_symbols_project_id_qualified_name
+        ON script_symbols(project_id, qualified_name);
+    )sql");
+
+    database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_script_symbols_project_id_symbol_kind
+        ON script_symbols(project_id, symbol_kind);
+    )sql");
+
+    database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_script_symbols_project_id_parent_symbol_id
+        ON script_symbols(project_id, parent_symbol_id);
+    )sql");
+
+    database.exec(R"sql(
         CREATE INDEX IF NOT EXISTS idx_script_dependencies_project_id_source_script_file_id
         ON script_dependencies(project_id, source_script_file_id);
     )sql");
@@ -548,6 +767,121 @@ void create_schema_v2_indexes(Database &database) {
     database.exec(R"sql(
         CREATE INDEX IF NOT EXISTS idx_script_dependencies_project_id_is_resolved
         ON script_dependencies(project_id, is_resolved);
+    )sql");
+
+    database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_script_symbols_project_id_scan_generation
+        ON script_symbols(project_id, last_parsed_generation);
+    )sql");
+
+    database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_script_references_project_id_script_file_id
+        ON script_references(project_id, script_file_id);
+    )sql");
+
+    database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_script_references_project_id_source_script_file_id
+        ON script_references(project_id, source_script_file_id);
+    )sql");
+
+    database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_script_references_project_id_source_symbol_id
+        ON script_references(project_id, source_symbol_id);
+    )sql");
+
+    database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_script_references_project_id_target_file_id
+        ON script_references(project_id, target_file_id);
+    )sql");
+
+    database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_script_references_project_id_target_symbol_id
+        ON script_references(project_id, target_symbol_id);
+    )sql");
+
+    database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_script_references_project_id_target_class_name
+        ON script_references(project_id, target_class_name);
+    )sql");
+
+    database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_script_references_project_id_reference_kind
+        ON script_references(project_id, reference_kind);
+    )sql");
+
+    database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_script_references_project_id_is_resolved
+        ON script_references(project_id, is_resolved);
+    )sql");
+
+    database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_script_references_project_id_is_dynamic
+        ON script_references(project_id, is_dynamic);
+    )sql");
+
+    database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_script_references_project_id_scan_generation
+        ON script_references(project_id, scan_generation);
+    )sql");
+
+    database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_script_doc_comments_project_id_script_file_id
+        ON script_doc_comments(project_id, script_file_id);
+    )sql");
+
+    database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_script_doc_comments_project_id_symbol_id
+        ON script_doc_comments(project_id, symbol_id);
+    )sql");
+
+    database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_script_doc_comments_project_id_target_symbol_id
+        ON script_doc_comments(project_id, target_symbol_id);
+    )sql");
+
+    database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_script_doc_comments_project_id_scan_generation
+        ON script_doc_comments(project_id, scan_generation);
+    )sql");
+
+    database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_scene_external_resources_project_id_scene_file_id
+        ON scene_external_resources(project_id, scene_file_id);
+    )sql");
+
+    database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_scene_external_resources_project_id_scan_generation
+        ON scene_external_resources(project_id, scan_generation);
+    )sql");
+
+    database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_scene_external_resources_project_id_target_file_id
+        ON scene_external_resources(project_id, target_file_id);
+    )sql");
+
+    database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_scene_script_attachments_project_id_scene_file_id
+        ON scene_script_attachments(project_id, scene_file_id);
+    )sql");
+
+    database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_scene_script_attachments_project_id_script_file_id
+        ON scene_script_attachments(project_id, script_file_id);
+    )sql");
+
+    database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_scene_script_attachments_project_id_script_file_id_node_path
+        ON scene_script_attachments(project_id, script_file_id, node_path);
+    )sql");
+
+    database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_scene_script_attachments_project_id_is_resolved
+        ON scene_script_attachments(project_id, is_resolved);
+    )sql");
+
+    database.exec(R"sql(
+        CREATE INDEX IF NOT EXISTS idx_scene_script_attachments_project_id_scan_generation
+        ON scene_script_attachments(project_id, scan_generation);
     )sql");
 
     database.exec(R"sql(
@@ -582,6 +916,7 @@ void ensure_schema_v3_columns(Database &database) {
     add_column_if_missing(database, "project_files", "dirty_reason TEXT NOT NULL DEFAULT 'new_path'");
     add_column_if_missing(database, "project_files", "parser_version INTEGER NOT NULL DEFAULT 1");
     add_column_if_missing(database, "project_files", "dependency_parser_version INTEGER NOT NULL DEFAULT 1");
+    add_column_if_missing(database, "project_files", "scene_parser_version INTEGER NOT NULL DEFAULT 1");
     add_column_if_missing(database, "project_files", "classifier_version INTEGER NOT NULL DEFAULT 1");
     add_column_if_missing(database, "project_files", "parse_status TEXT NOT NULL DEFAULT 'not_parsed'");
     add_column_if_missing(database, "project_files", "is_deleted INTEGER NOT NULL DEFAULT 0");
@@ -592,6 +927,107 @@ void ensure_schema_v3_columns(Database &database) {
     add_column_if_missing(database, "project_custom_classes", "parse_status TEXT NOT NULL DEFAULT 'not_parsed'");
     add_column_if_missing(database, "project_custom_classes", "parse_error TEXT NOT NULL DEFAULT ''");
     add_column_if_missing(database, "project_custom_classes", "last_parsed_generation INTEGER NOT NULL DEFAULT 0");
+
+    add_column_if_missing(database, "script_symbols", "name TEXT NOT NULL DEFAULT ''");
+    add_column_if_missing(database, "script_symbols", "qualified_name TEXT NOT NULL DEFAULT ''");
+    add_column_if_missing(database, "script_symbols", "declared_type TEXT NOT NULL DEFAULT ''");
+    add_column_if_missing(database, "script_symbols", "return_type TEXT NOT NULL DEFAULT ''");
+    add_column_if_missing(database, "script_symbols", "default_value_excerpt TEXT NOT NULL DEFAULT ''");
+    add_column_if_missing(database, "script_symbols", "visibility TEXT NOT NULL DEFAULT ''");
+    add_column_if_missing(database, "script_symbols", "flags INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "script_symbols", "doc_comment_state TEXT NOT NULL DEFAULT 'none'");
+
+    add_column_if_missing(database, "script_references", "script_file_id INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "script_doc_comments", "target_symbol_id INTEGER");
+    add_column_if_missing(database, "script_doc_comments", "target_kind TEXT NOT NULL DEFAULT ''");
+    add_column_if_missing(database, "script_doc_comments", "text_hash TEXT NOT NULL DEFAULT ''");
+    add_column_if_missing(database, "script_doc_comments", "text_excerpt TEXT NOT NULL DEFAULT ''");
+    add_column_if_missing(database, "script_doc_comments", "start_line INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "script_doc_comments", "end_line INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "script_doc_comments", "is_attached INTEGER NOT NULL DEFAULT 0");
+
+    add_column_if_missing(database, "scene_external_resources", "ext_resource_id TEXT NOT NULL DEFAULT ''");
+    add_column_if_missing(database, "scene_external_resources", "scene_parser_version INTEGER NOT NULL DEFAULT 1");
+
+    add_column_if_missing(database, "scene_script_attachments", "node_name TEXT NOT NULL DEFAULT ''");
+    add_column_if_missing(database, "scene_script_attachments", "node_type TEXT NOT NULL DEFAULT ''");
+    add_column_if_missing(database, "scene_script_attachments", "attachment_kind TEXT NOT NULL DEFAULT 'unknown'");
+    add_column_if_missing(database, "scene_script_attachments", "ext_resource_id TEXT NOT NULL DEFAULT ''");
+    add_column_if_missing(database, "scene_script_attachments", "script_resource_path TEXT NOT NULL DEFAULT ''");
+    add_column_if_missing(database, "scene_script_attachments", "script_uid TEXT NOT NULL DEFAULT ''");
+    add_column_if_missing(database, "scene_script_attachments", "scene_parser_version INTEGER NOT NULL DEFAULT 1");
+
+    database.exec(R"sql(
+        UPDATE script_symbols
+        SET
+            name = CASE WHEN name = '' THEN symbol_name ELSE name END,
+            qualified_name = CASE
+                WHEN qualified_name <> '' THEN qualified_name
+                WHEN class_name <> '' AND symbol_name <> '' THEN class_name || '::' || symbol_name
+                ELSE symbol_name
+            END,
+            flags = CASE WHEN flags = 0 THEN symbol_flags ELSE flags END
+        WHERE
+            name = '' OR
+            qualified_name = '' OR
+            flags = 0;
+    )sql");
+
+    database.exec(R"sql(
+        UPDATE script_references
+        SET script_file_id = source_script_file_id
+        WHERE script_file_id = 0;
+    )sql");
+
+    database.exec(R"sql(
+        UPDATE script_doc_comments
+        SET
+            target_symbol_id = COALESCE(target_symbol_id, symbol_id),
+            text_excerpt = CASE
+                WHEN text_excerpt <> '' THEN text_excerpt
+                WHEN summary_text <> '' THEN summary_text
+                ELSE comment_text
+            END,
+            start_line = CASE WHEN start_line = 0 THEN line_start ELSE start_line END,
+            end_line = CASE WHEN end_line = 0 THEN line_end ELSE end_line END,
+            is_attached = CASE
+                WHEN is_attached <> 0 THEN is_attached
+                WHEN comment_style IN ('gd_doc', 'csharp_xml') THEN 1
+                ELSE 0
+            END
+        WHERE
+            target_symbol_id IS NULL OR
+            text_excerpt = '' OR
+            start_line = 0 OR
+            end_line = 0;
+    )sql");
+
+    database.exec(R"sql(
+        UPDATE scene_external_resources
+        SET
+            ext_resource_id = CASE WHEN ext_resource_id = '' THEN resource_slot ELSE ext_resource_id END,
+            scene_parser_version = CASE WHEN scene_parser_version = 1 THEN parser_version ELSE scene_parser_version END
+        WHERE
+            ext_resource_id = '' OR
+            scene_parser_version = 1;
+    )sql");
+
+    database.exec(R"sql(
+        UPDATE scene_script_attachments
+        SET
+            ext_resource_id = CASE WHEN ext_resource_id = '' THEN ext_resource_slot ELSE ext_resource_id END,
+            script_resource_path = CASE
+                WHEN script_resource_path <> '' THEN script_resource_path
+                ELSE script_project_relative_path
+            END,
+            script_uid = CASE WHEN script_uid = '' THEN script_resource_uid ELSE script_uid END,
+            scene_parser_version = CASE WHEN scene_parser_version = 1 THEN parser_version ELSE scene_parser_version END
+        WHERE
+            ext_resource_id = '' OR
+            script_resource_path = '' OR
+            script_uid = '' OR
+            scene_parser_version = 1;
+    )sql");
 
     add_column_if_missing(database, "scan_metrics", "existing_snapshot_load_ms INTEGER NOT NULL DEFAULT 0");
     add_column_if_missing(database, "scan_metrics", "reserve_setup_ms INTEGER NOT NULL DEFAULT 0");
@@ -608,6 +1044,9 @@ void ensure_schema_v3_columns(Database &database) {
     add_column_if_missing(database, "scan_metrics", "sqlite_deleted_reconcile_ms INTEGER NOT NULL DEFAULT 0");
     add_column_if_missing(database, "scan_metrics", "sqlite_metrics_write_ms INTEGER NOT NULL DEFAULT 0");
     add_column_if_missing(database, "scan_metrics", "dependency_parse_ms INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "full_symbol_parse_ms INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "doc_comment_parse_ms INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "scene_attachment_parse_ms INTEGER NOT NULL DEFAULT 0");
     add_column_if_missing(database, "scan_metrics", "tokenizer_ms INTEGER NOT NULL DEFAULT 0");
     add_column_if_missing(database, "scan_metrics", "rows_clean_refreshed INTEGER NOT NULL DEFAULT 0");
     add_column_if_missing(database, "scan_metrics", "script_lines_scanned INTEGER NOT NULL DEFAULT 0");
@@ -616,15 +1055,157 @@ void ensure_schema_v3_columns(Database &database) {
     add_column_if_missing(database, "scan_metrics", "path_arena_bytes INTEGER NOT NULL DEFAULT 0");
     add_column_if_missing(database, "scan_metrics", "existing_snapshot_count INTEGER NOT NULL DEFAULT 0");
     add_column_if_missing(database, "scan_metrics", "parsed_script_count INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "symbols_skipped_clean INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "scenes_skipped_clean INTEGER NOT NULL DEFAULT 0");
     add_column_if_missing(database, "scan_metrics", "scripts_dependency_parsed INTEGER NOT NULL DEFAULT 0");
     add_column_if_missing(database, "scan_metrics", "scripts_dependency_skipped_clean INTEGER NOT NULL DEFAULT 0");
     add_column_if_missing(database, "scan_metrics", "parser_bytes_read INTEGER NOT NULL DEFAULT 0");
     add_column_if_missing(database, "scan_metrics", "parser_tokens_generated INTEGER NOT NULL DEFAULT 0");
     add_column_if_missing(database, "scan_metrics", "parser_limit_exceeded_count INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "symbol_rows_created INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "reference_rows_created INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "doc_comment_rows_created INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing(database, "scan_metrics", "scene_attachment_rows_created INTEGER NOT NULL DEFAULT 0");
     add_column_if_missing(database, "scan_metrics", "dependency_records_created INTEGER NOT NULL DEFAULT 0");
     add_column_if_missing(database, "scan_metrics", "unresolved_dependency_count INTEGER NOT NULL DEFAULT 0");
     add_column_if_missing(database, "scan_metrics", "dynamic_dependency_count INTEGER NOT NULL DEFAULT 0");
     add_column_if_missing(database, "scan_metrics", "sqlite_statement_steps INTEGER NOT NULL DEFAULT 0");
+}
+
+void ensure_script_symbols_generic_layout(Database &database) {
+    if (!table_exists(database, "script_symbols")) {
+        return;
+    }
+
+    if (table_has_column(database, "script_symbols", "symbol_kind")) {
+        return;
+    }
+
+    database.exec("PRAGMA foreign_keys = OFF;");
+
+    try {
+        database.exec("DROP TABLE IF EXISTS script_symbols_v6;");
+        database.exec(R"sql(
+            CREATE TABLE script_symbols_v6 (
+                id INTEGER PRIMARY KEY,
+                project_id INTEGER NOT NULL,
+                script_file_id INTEGER NOT NULL,
+                symbol_slot INTEGER NOT NULL DEFAULT 0,
+                parent_symbol_slot INTEGER,
+                parent_symbol_id INTEGER,
+                symbol_kind TEXT NOT NULL DEFAULT 'unknown',
+                name TEXT NOT NULL DEFAULT '',
+                qualified_name TEXT NOT NULL DEFAULT '',
+                declared_type TEXT NOT NULL DEFAULT '',
+                return_type TEXT NOT NULL DEFAULT '',
+                default_value_excerpt TEXT NOT NULL DEFAULT '',
+                visibility TEXT NOT NULL DEFAULT '',
+                flags INTEGER NOT NULL DEFAULT 0,
+                doc_comment_state TEXT NOT NULL DEFAULT 'none',
+                symbol_name TEXT NOT NULL DEFAULT '',
+                class_name TEXT NOT NULL DEFAULT '',
+                language TEXT NOT NULL DEFAULT '',
+                signature_text TEXT NOT NULL DEFAULT '',
+                symbol_flags INTEGER NOT NULL DEFAULT 0,
+                line_start INTEGER NOT NULL DEFAULT 0,
+                column_start INTEGER NOT NULL DEFAULT 0,
+                line_end INTEGER NOT NULL DEFAULT 0,
+                column_end INTEGER NOT NULL DEFAULT 0,
+                parser_version INTEGER NOT NULL DEFAULT 1,
+                last_parsed_generation INTEGER NOT NULL DEFAULT 0,
+                last_seen_scan_run_id INTEGER,
+                created_at_unix INTEGER NOT NULL DEFAULT 0,
+                updated_at_unix INTEGER NOT NULL DEFAULT 0,
+                UNIQUE(project_id, script_file_id, symbol_slot),
+                FOREIGN KEY (project_id)
+                    REFERENCES projects(id)
+                    ON DELETE CASCADE,
+                FOREIGN KEY (script_file_id)
+                    REFERENCES project_files(id)
+                    ON DELETE CASCADE,
+                FOREIGN KEY (parent_symbol_id)
+                    REFERENCES script_symbols_v6(id)
+                    ON DELETE SET NULL,
+                FOREIGN KEY (last_seen_scan_run_id)
+                    REFERENCES project_scan_runs(id)
+                    ON DELETE SET NULL
+            );
+        )sql");
+
+        Statement copy_symbols = database.prepare(R"sql(
+            INSERT INTO script_symbols_v6 (
+                id,
+                project_id,
+                script_file_id,
+                symbol_slot,
+                parent_symbol_slot,
+                parent_symbol_id,
+                symbol_kind,
+                name,
+                qualified_name,
+                declared_type,
+                return_type,
+                default_value_excerpt,
+                visibility,
+                flags,
+                doc_comment_state,
+                symbol_name,
+                class_name,
+                language,
+                signature_text,
+                symbol_flags,
+                line_start,
+                column_start,
+                line_end,
+                column_end,
+                parser_version,
+                last_parsed_generation,
+                last_seen_scan_run_id,
+                created_at_unix,
+                updated_at_unix
+            )
+            SELECT
+                id,
+                project_id,
+                script_file_id,
+                0,
+                NULL,
+                NULL,
+                'class',
+                COALESCE(NULLIF(class_name, ''), 'script_root'),
+                COALESCE(NULLIF(class_name, ''), 'script_root'),
+                '',
+                '',
+                '',
+                '',
+                0,
+                'none',
+                COALESCE(NULLIF(class_name, ''), 'script_root'),
+                class_name,
+                language,
+                class_name,
+                0,
+                1,
+                1,
+                1,
+                1,
+                parser_version,
+                last_parsed_generation,
+                last_seen_scan_run_id,
+                created_at_unix,
+                updated_at_unix
+            FROM script_symbols;
+        )sql");
+        copy_symbols.step_done();
+
+        database.exec("DROP TABLE script_symbols;");
+        database.exec("ALTER TABLE script_symbols_v6 RENAME TO script_symbols;");
+    } catch (...) {
+        database.exec("PRAGMA foreign_keys = ON;");
+        throw;
+    }
+
+    database.exec("PRAGMA foreign_keys = ON;");
 }
 
 bool needs_legacy_v1_migration(Database &database) {
@@ -845,6 +1426,7 @@ void create_fresh_v2_schema(Database &database) {
     create_projects_table(database);
     create_schema_v2_tables(database);
     ensure_schema_v3_columns(database);
+    ensure_script_symbols_generic_layout(database);
     create_schema_v2_indexes(database);
 
     database.exec(R"sql(
@@ -862,6 +1444,7 @@ void ensure_v2_schema(Database &database) {
     create_projects_table(database);
     create_schema_v2_tables(database);
     ensure_schema_v3_columns(database);
+    ensure_script_symbols_generic_layout(database);
     create_schema_v2_indexes(database);
 
     database.exec(R"sql(

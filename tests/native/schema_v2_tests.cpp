@@ -78,6 +78,14 @@ bool table_exists(Database &database, const std::string &table_name) {
     return statement.step() == Statement::StepResult::Row;
 }
 
+bool index_exists(Database &database, const std::string &index_name) {
+    Statement statement = database.prepare(
+        "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?1 LIMIT 1;"
+    );
+    statement.bind_text(1, index_name);
+    return statement.step() == Statement::StepResult::Row;
+}
+
 int64_t register_project(
     ProjectRegistryRepository &registry,
     const std::string &project_uid,
@@ -119,8 +127,8 @@ TEST_CASE("schema_v2_creation_is_idempotent") {
     CHECK(table_has_column(database, "project_scan_unknowns", "project_id"));
 }
 
-TEST_CASE("schema_v5_dependency_tables_and_metrics_columns_exist") {
-    TemporaryDatabaseFile temp_db(make_temp_database_path("schema_v5_dependency"));
+TEST_CASE("schema_v7_script_intelligence_tables_and_metrics_columns_exist") {
+    TemporaryDatabaseFile temp_db(make_temp_database_path("schema_v7_script_intelligence"));
 
     Database database(temp_db.path.string());
     gotool::database::create_schema(database, 0);
@@ -128,7 +136,28 @@ TEST_CASE("schema_v5_dependency_tables_and_metrics_columns_exist") {
     CHECK(query_single_int64(database, "PRAGMA user_version;") == gotool::database::GOTOOL_SCHEMA_VERSION);
     CHECK(table_exists(database, "script_symbols"));
     CHECK(table_exists(database, "script_dependencies"));
+    CHECK(table_exists(database, "script_references"));
+    CHECK(table_exists(database, "script_doc_comments"));
+    CHECK(table_exists(database, "scene_external_resources"));
+    CHECK(table_exists(database, "scene_script_attachments"));
     CHECK(table_has_column(database, "project_files", "dependency_parser_version"));
+    CHECK(table_has_column(database, "project_files", "scene_parser_version"));
+
+    CHECK(table_has_column(database, "script_symbols", "symbol_slot"));
+    CHECK(table_has_column(database, "script_symbols", "parent_symbol_slot"));
+    CHECK(table_has_column(database, "script_symbols", "parent_symbol_id"));
+    CHECK(table_has_column(database, "script_symbols", "symbol_kind"));
+    CHECK(table_has_column(database, "script_symbols", "name"));
+    CHECK(table_has_column(database, "script_symbols", "qualified_name"));
+    CHECK(table_has_column(database, "script_symbols", "declared_type"));
+    CHECK(table_has_column(database, "script_symbols", "return_type"));
+    CHECK(table_has_column(database, "script_symbols", "default_value_excerpt"));
+    CHECK(table_has_column(database, "script_symbols", "visibility"));
+    CHECK(table_has_column(database, "script_symbols", "flags"));
+    CHECK(table_has_column(database, "script_symbols", "doc_comment_state"));
+    CHECK(table_has_column(database, "script_symbols", "symbol_name"));
+    CHECK(table_has_column(database, "script_symbols", "line_end"));
+    CHECK(table_has_column(database, "script_symbols", "column_end"));
 
     CHECK(table_has_column(database, "script_dependencies", "source_script_file_id"));
     CHECK(table_has_column(database, "script_dependencies", "source_symbol_id"));
@@ -142,19 +171,323 @@ TEST_CASE("schema_v5_dependency_tables_and_metrics_columns_exist") {
     CHECK(table_has_column(database, "script_dependencies", "parser_version"));
     CHECK(table_has_column(database, "script_dependencies", "scan_generation"));
 
+    CHECK(table_has_column(database, "script_references", "script_file_id"));
+    CHECK(table_has_column(database, "script_references", "source_script_file_id"));
+    CHECK(table_has_column(database, "script_references", "source_symbol_id"));
+    CHECK(table_has_column(database, "script_references", "target_file_id"));
+    CHECK(table_has_column(database, "script_references", "target_symbol_id"));
+    CHECK(table_has_column(database, "script_references", "target_class_name"));
+    CHECK(table_has_column(database, "script_references", "target_symbol_name"));
+    CHECK(table_has_column(database, "script_references", "reference_kind"));
+    CHECK(table_has_column(database, "script_references", "source_line_end"));
+    CHECK(table_has_column(database, "script_references", "source_column_end"));
+    CHECK(table_has_column(database, "script_references", "is_unresolved"));
+
+    CHECK(table_has_column(database, "script_doc_comments", "script_file_id"));
+    CHECK(table_has_column(database, "script_doc_comments", "target_symbol_id"));
+    CHECK(table_has_column(database, "script_doc_comments", "target_kind"));
+    CHECK(table_has_column(database, "script_doc_comments", "text_hash"));
+    CHECK(table_has_column(database, "script_doc_comments", "text_excerpt"));
+    CHECK(table_has_column(database, "script_doc_comments", "symbol_id"));
+    CHECK(table_has_column(database, "script_doc_comments", "comment_style"));
+    CHECK(table_has_column(database, "script_doc_comments", "summary_text"));
+    CHECK(table_has_column(database, "script_doc_comments", "start_line"));
+    CHECK(table_has_column(database, "script_doc_comments", "end_line"));
+    CHECK(table_has_column(database, "script_doc_comments", "is_attached"));
+
+    CHECK(table_has_column(database, "scene_external_resources", "scene_file_id"));
+    CHECK(table_has_column(database, "scene_external_resources", "ext_resource_id"));
+    CHECK(table_has_column(database, "scene_external_resources", "resource_slot"));
+    CHECK(table_has_column(database, "scene_external_resources", "resource_type"));
+    CHECK(table_has_column(database, "scene_external_resources", "scene_parser_version"));
+    CHECK(table_has_column(database, "scene_external_resources", "target_file_id"));
+
+    CHECK(table_has_column(database, "scene_script_attachments", "scene_file_id"));
+    CHECK(table_has_column(database, "scene_script_attachments", "node_path"));
+    CHECK(table_has_column(database, "scene_script_attachments", "node_name"));
+    CHECK(table_has_column(database, "scene_script_attachments", "node_type"));
+    CHECK(table_has_column(database, "scene_script_attachments", "attachment_kind"));
+    CHECK(table_has_column(database, "scene_script_attachments", "ext_resource_id"));
+    CHECK(table_has_column(database, "scene_script_attachments", "script_resource_path"));
+    CHECK(table_has_column(database, "scene_script_attachments", "script_uid"));
+    CHECK(table_has_column(database, "scene_script_attachments", "script_project_relative_path"));
+    CHECK(table_has_column(database, "scene_script_attachments", "scene_parser_version"));
+    CHECK(table_has_column(database, "scene_script_attachments", "script_symbol_id"));
+    CHECK(table_has_column(database, "scene_script_attachments", "is_resolved"));
+
     CHECK(table_has_column(database, "scan_metrics", "dependency_parse_ms"));
+    CHECK(table_has_column(database, "scan_metrics", "full_symbol_parse_ms"));
+    CHECK(table_has_column(database, "scan_metrics", "doc_comment_parse_ms"));
+    CHECK(table_has_column(database, "scan_metrics", "scene_attachment_parse_ms"));
     CHECK(table_has_column(database, "scan_metrics", "tokenizer_ms"));
     CHECK(table_has_column(database, "scan_metrics", "dependency_sqlite_stage_ms"));
     CHECK(table_has_column(database, "scan_metrics", "dependency_resolution_ms"));
+    CHECK(table_has_column(database, "scan_metrics", "symbol_rows_created"));
+    CHECK(table_has_column(database, "scan_metrics", "reference_rows_created"));
+    CHECK(table_has_column(database, "scan_metrics", "doc_comment_rows_created"));
+    CHECK(table_has_column(database, "scan_metrics", "scene_attachment_rows_created"));
     CHECK(table_has_column(database, "scan_metrics", "dependency_records_created"));
     CHECK(table_has_column(database, "scan_metrics", "unresolved_dependency_count"));
     CHECK(table_has_column(database, "scan_metrics", "dynamic_dependency_count"));
+    CHECK(table_has_column(database, "scan_metrics", "symbols_skipped_clean"));
+    CHECK(table_has_column(database, "scan_metrics", "scenes_skipped_clean"));
     CHECK(table_has_column(database, "scan_metrics", "scripts_dependency_parsed"));
     CHECK(table_has_column(database, "scan_metrics", "scripts_dependency_skipped_clean"));
     CHECK(table_has_column(database, "scan_metrics", "parser_bytes_read"));
     CHECK(table_has_column(database, "scan_metrics", "parser_lines_scanned"));
     CHECK(table_has_column(database, "scan_metrics", "parser_tokens_generated"));
     CHECK(table_has_column(database, "scan_metrics", "parser_limit_exceeded_count"));
+
+    CHECK(index_exists(database, "idx_project_files_project_id_scene_parser_version"));
+    CHECK(index_exists(database, "idx_script_symbols_project_id_name"));
+    CHECK(index_exists(database, "idx_script_symbols_project_id_qualified_name"));
+    CHECK(index_exists(database, "idx_script_symbols_project_id_symbol_kind"));
+    CHECK(index_exists(database, "idx_script_symbols_project_id_parent_symbol_id"));
+    CHECK(index_exists(database, "idx_script_symbols_project_id_scan_generation"));
+    CHECK(index_exists(database, "idx_script_references_project_id_script_file_id"));
+    CHECK(index_exists(database, "idx_script_references_project_id_target_class_name"));
+    CHECK(index_exists(database, "idx_script_references_project_id_reference_kind"));
+    CHECK(index_exists(database, "idx_script_references_project_id_scan_generation"));
+    CHECK(index_exists(database, "idx_script_references_project_id_source_symbol_id"));
+    CHECK(index_exists(database, "idx_script_doc_comments_project_id_symbol_id"));
+    CHECK(index_exists(database, "idx_script_doc_comments_project_id_target_symbol_id"));
+    CHECK(index_exists(database, "idx_script_doc_comments_project_id_scan_generation"));
+    CHECK(index_exists(database, "idx_scene_external_resources_project_id_scene_file_id"));
+    CHECK(index_exists(database, "idx_scene_external_resources_project_id_scan_generation"));
+    CHECK(index_exists(database, "idx_scene_script_attachments_project_id_script_file_id"));
+    CHECK(index_exists(database, "idx_scene_script_attachments_project_id_script_file_id_node_path"));
+    CHECK(index_exists(database, "idx_scene_script_attachments_project_id_scan_generation"));
+
+    gotool::database::create_schema(database, 0);
+    CHECK(query_single_int64(database, "PRAGMA user_version;") == gotool::database::GOTOOL_SCHEMA_VERSION);
+}
+
+TEST_CASE("schema_v6_like_tables_migrate_to_v7_columns_and_preserve_data") {
+    TemporaryDatabaseFile temp_db(make_temp_database_path("schema_v6_to_v7_copy_forward"));
+    Database database(temp_db.path.string());
+
+    database.exec(R"sql(
+        CREATE TABLE script_symbols (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER NOT NULL,
+            script_file_id INTEGER NOT NULL,
+            symbol_slot INTEGER NOT NULL DEFAULT 0,
+            parent_symbol_slot INTEGER,
+            parent_symbol_id INTEGER,
+            symbol_kind TEXT NOT NULL DEFAULT 'class',
+            symbol_name TEXT NOT NULL DEFAULT '',
+            class_name TEXT NOT NULL DEFAULT '',
+            language TEXT NOT NULL DEFAULT '',
+            signature_text TEXT NOT NULL DEFAULT '',
+            symbol_flags INTEGER NOT NULL DEFAULT 0,
+            line_start INTEGER NOT NULL DEFAULT 0,
+            column_start INTEGER NOT NULL DEFAULT 0,
+            line_end INTEGER NOT NULL DEFAULT 0,
+            column_end INTEGER NOT NULL DEFAULT 0,
+            parser_version INTEGER NOT NULL DEFAULT 1,
+            last_parsed_generation INTEGER NOT NULL DEFAULT 0,
+            last_seen_scan_run_id INTEGER,
+            created_at_unix INTEGER NOT NULL DEFAULT 0,
+            updated_at_unix INTEGER NOT NULL DEFAULT 0
+        );
+    )sql");
+
+    database.exec(R"sql(
+        CREATE TABLE script_references (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER NOT NULL,
+            source_script_file_id INTEGER NOT NULL,
+            source_symbol_id INTEGER,
+            target_file_id INTEGER,
+            target_symbol_id INTEGER,
+            target_project_relative_path TEXT,
+            target_class_name TEXT,
+            target_symbol_name TEXT,
+            target_resource_uid TEXT,
+            reference_kind TEXT NOT NULL DEFAULT 'unknown',
+            reference_text TEXT NOT NULL DEFAULT '',
+            source_line INTEGER NOT NULL DEFAULT 0,
+            source_column INTEGER NOT NULL DEFAULT 0,
+            source_line_end INTEGER NOT NULL DEFAULT 0,
+            source_column_end INTEGER NOT NULL DEFAULT 0,
+            confidence REAL NOT NULL DEFAULT 0,
+            is_dynamic INTEGER NOT NULL DEFAULT 0,
+            is_resolved INTEGER NOT NULL DEFAULT 0,
+            is_unresolved INTEGER NOT NULL DEFAULT 0,
+            parser_version INTEGER NOT NULL DEFAULT 1,
+            scan_generation INTEGER NOT NULL DEFAULT 0,
+            created_at_unix INTEGER NOT NULL DEFAULT 0
+        );
+    )sql");
+
+    database.exec(R"sql(
+        CREATE TABLE script_doc_comments (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER NOT NULL,
+            script_file_id INTEGER NOT NULL,
+            symbol_id INTEGER,
+            comment_style TEXT NOT NULL DEFAULT '',
+            comment_text TEXT NOT NULL DEFAULT '',
+            summary_text TEXT NOT NULL DEFAULT '',
+            line_start INTEGER NOT NULL DEFAULT 0,
+            column_start INTEGER NOT NULL DEFAULT 0,
+            line_end INTEGER NOT NULL DEFAULT 0,
+            column_end INTEGER NOT NULL DEFAULT 0,
+            parser_version INTEGER NOT NULL DEFAULT 1,
+            scan_generation INTEGER NOT NULL DEFAULT 0,
+            created_at_unix INTEGER NOT NULL DEFAULT 0
+        );
+    )sql");
+
+    database.exec(R"sql(
+        CREATE TABLE scene_external_resources (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER NOT NULL,
+            scene_file_id INTEGER NOT NULL,
+            resource_slot TEXT NOT NULL DEFAULT '',
+            resource_type TEXT NOT NULL DEFAULT '',
+            resource_path TEXT NOT NULL DEFAULT '',
+            resource_uid TEXT NOT NULL DEFAULT '',
+            target_file_id INTEGER,
+            is_script_resource INTEGER NOT NULL DEFAULT 0,
+            source_line INTEGER NOT NULL DEFAULT 0,
+            source_column INTEGER NOT NULL DEFAULT 0,
+            parser_version INTEGER NOT NULL DEFAULT 6,
+            scan_generation INTEGER NOT NULL DEFAULT 0,
+            created_at_unix INTEGER NOT NULL DEFAULT 0
+        );
+    )sql");
+
+    database.exec(R"sql(
+        CREATE TABLE scene_script_attachments (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER NOT NULL,
+            scene_file_id INTEGER NOT NULL,
+            node_path TEXT NOT NULL DEFAULT '',
+            ext_resource_slot TEXT NOT NULL DEFAULT '',
+            script_project_relative_path TEXT NOT NULL DEFAULT '',
+            script_resource_uid TEXT NOT NULL DEFAULT '',
+            script_file_id INTEGER,
+            script_symbol_id INTEGER,
+            is_dynamic INTEGER NOT NULL DEFAULT 0,
+            is_resolved INTEGER NOT NULL DEFAULT 0,
+            source_line INTEGER NOT NULL DEFAULT 0,
+            source_column INTEGER NOT NULL DEFAULT 0,
+            parser_version INTEGER NOT NULL DEFAULT 6,
+            scan_generation INTEGER NOT NULL DEFAULT 0,
+            created_at_unix INTEGER NOT NULL DEFAULT 0
+        );
+    )sql");
+
+    database.exec(R"sql(
+        INSERT INTO script_symbols (
+            id, project_id, script_file_id, symbol_slot, parent_symbol_slot, parent_symbol_id,
+            symbol_kind, symbol_name, class_name, language,
+            signature_text, symbol_flags, line_start, column_start, line_end, column_end, parser_version,
+            last_parsed_generation, last_seen_scan_run_id, created_at_unix, updated_at_unix
+        ) VALUES (
+            1, 2, 3, 4, NULL, NULL, 'function', 'spawn', 'Spawner', 'GDScript',
+            'func spawn() -> void', 7, 10, 1, 12, 1, 6,
+            9, NULL, 11, 12
+        );
+    )sql");
+
+    database.exec(R"sql(
+        INSERT INTO script_references (
+            id, project_id, source_script_file_id, source_symbol_id, target_file_id, target_symbol_id,
+            target_project_relative_path, target_class_name, target_symbol_name, target_resource_uid,
+            reference_kind, reference_text, source_line, source_column, source_line_end, source_column_end,
+            confidence, is_dynamic, is_resolved, is_unresolved, parser_version, scan_generation, created_at_unix
+        ) VALUES (
+            1, 2, 3, 1, NULL, NULL,
+            'scripts/enemy.gd', 'Enemy', 'Enemy', '',
+            'typed_var_ref', 'Enemy', 20, 5, 20, 10,
+            1000, 0, 1, 0, 6, 9, 13
+        );
+    )sql");
+
+    database.exec(R"sql(
+        INSERT INTO script_doc_comments (
+            id, project_id, script_file_id, symbol_id, comment_style, comment_text, summary_text,
+            line_start, column_start, line_end, column_end, parser_version, scan_generation, created_at_unix
+        ) VALUES (
+            1, 2, 3, 1, 'gd_doc', 'Spawns an enemy', 'Spawns an enemy',
+            8, 1, 9, 1, 6, 9, 14
+        );
+    )sql");
+
+    database.exec(R"sql(
+        INSERT INTO scene_external_resources (
+            id, project_id, scene_file_id, resource_slot, resource_type, resource_path, resource_uid,
+            target_file_id, is_script_resource, source_line, source_column, parser_version, scan_generation, created_at_unix
+        ) VALUES (
+            1, 2, 5, '2', 'Script', 'scripts/spawner.gd', 'uid://abc',
+            NULL, 1, 3, 1, 6, 9, 15
+        );
+    )sql");
+
+    database.exec(R"sql(
+        INSERT INTO scene_script_attachments (
+            id, project_id, scene_file_id, node_path, ext_resource_slot, script_project_relative_path,
+            script_resource_uid, script_file_id, script_symbol_id, is_dynamic, is_resolved, source_line,
+            source_column, parser_version, scan_generation, created_at_unix
+        ) VALUES (
+            1, 2, 5, 'Root/Spawner', '2', 'scripts/spawner.gd',
+            'uid://abc', 3, 1, 0, 1, 18,
+            1, 6, 9, 16
+        );
+    )sql");
+
+    gotool::database::create_schema(database, 0);
+    gotool::database::create_schema(database, 0);
+
+    CHECK(table_has_column(database, "script_symbols", "name"));
+    CHECK(table_has_column(database, "script_references", "script_file_id"));
+    CHECK(table_has_column(database, "script_doc_comments", "target_symbol_id"));
+    CHECK(table_has_column(database, "scene_external_resources", "ext_resource_id"));
+    CHECK(table_has_column(database, "scene_script_attachments", "script_resource_path"));
+
+    Statement symbol = database.prepare(
+        "SELECT name, qualified_name, flags FROM script_symbols WHERE id = 1;"
+    );
+    REQUIRE(symbol.step() == Statement::StepResult::Row);
+    CHECK(symbol.column_text(0) == "spawn");
+    CHECK(symbol.column_text(1) == "Spawner::spawn");
+    CHECK(symbol.column_int64(2) == 7);
+
+    Statement reference = database.prepare(
+        "SELECT script_file_id FROM script_references WHERE id = 1;"
+    );
+    REQUIRE(reference.step() == Statement::StepResult::Row);
+    CHECK(reference.column_int64(0) == 3);
+
+    Statement doc = database.prepare(
+        "SELECT target_symbol_id, text_excerpt, start_line, end_line, is_attached "
+        "FROM script_doc_comments WHERE id = 1;"
+    );
+    REQUIRE(doc.step() == Statement::StepResult::Row);
+    CHECK(doc.column_int64(0) == 1);
+    CHECK(doc.column_text(1) == "Spawns an enemy");
+    CHECK(doc.column_int64(2) == 8);
+    CHECK(doc.column_int64(3) == 9);
+    CHECK(doc.column_int64(4) == 1);
+
+    Statement ext = database.prepare(
+        "SELECT ext_resource_id, scene_parser_version FROM scene_external_resources WHERE id = 1;"
+    );
+    REQUIRE(ext.step() == Statement::StepResult::Row);
+    CHECK(ext.column_text(0) == "2");
+    CHECK(ext.column_int64(1) == 6);
+
+    Statement attachment = database.prepare(
+        "SELECT ext_resource_id, script_resource_path, script_uid, scene_parser_version "
+        "FROM scene_script_attachments WHERE id = 1;"
+    );
+    REQUIRE(attachment.step() == Statement::StepResult::Row);
+    CHECK(attachment.column_text(0) == "2");
+    CHECK(attachment.column_text(1) == "scripts/spawner.gd");
+    CHECK(attachment.column_text(2) == "uid://abc");
+    CHECK(attachment.column_int64(3) == 6);
 }
 
 TEST_CASE("same_relative_path_can_exist_across_multiple_projects") {

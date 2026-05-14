@@ -216,6 +216,49 @@ gotool::project_scanner::CustomClassQuery custom_class_query_from_dictionary(con
     return query;
 }
 
+gotool::project_scanner::SymbolQueryFilter symbol_query_filter_from_dictionary(const Dictionary &filter) {
+    gotool::project_scanner::SymbolQueryFilter query;
+    query.symbol_kind = to_utf8(String(filter.get("symbol_kind", "")));
+    query.search = to_utf8(String(filter.get("search", "")));
+    return query;
+}
+
+gotool::project_scanner::ReferenceQueryFilter reference_query_filter_from_dictionary(const Dictionary &filter) {
+    gotool::project_scanner::ReferenceQueryFilter query;
+    if (filter.has("script_file_id")) {
+        const int64_t script_file_id = static_cast<int64_t>(filter.get("script_file_id", 0));
+        if (script_file_id > 0) {
+            query.script_file_id = script_file_id;
+        }
+    }
+    query.reference_kind = to_utf8(String(filter.get("reference_kind", "")));
+    return query;
+}
+
+gotool::project_scanner::SceneAttachmentQueryFilter scene_attachment_filter_from_dictionary(const Dictionary &filter) {
+    gotool::project_scanner::SceneAttachmentQueryFilter query;
+    if (filter.has("scene_file_id")) {
+        const int64_t scene_file_id = static_cast<int64_t>(filter.get("scene_file_id", 0));
+        if (scene_file_id > 0) {
+            query.scene_file_id = scene_file_id;
+        }
+    }
+    if (filter.has("script_file_id")) {
+        const int64_t script_file_id = static_cast<int64_t>(filter.get("script_file_id", 0));
+        if (script_file_id > 0) {
+            query.script_file_id = script_file_id;
+        }
+    }
+    return query;
+}
+
+gotool::project_scanner::DocCommentGapFilter doc_comment_gap_filter_from_dictionary(const Dictionary &filter) {
+    gotool::project_scanner::DocCommentGapFilter query;
+    query.symbol_kind = to_utf8(String(filter.get("symbol_kind", "")));
+    query.search = to_utf8(String(filter.get("search", "")));
+    return query;
+}
+
 std::vector<std::string> normalized_dirty_paths_from_array(const Array &paths) {
     std::vector<std::string> normalized;
     normalized.reserve(static_cast<size_t>(paths.size()));
@@ -322,6 +365,145 @@ Dictionary dependency_cycle_row_to_dictionary(const gotool::project_scanner::Dep
     return entry;
 }
 
+Dictionary symbol_row_to_dictionary(const gotool::project_scanner::ScriptSymbolRow &row) {
+    Dictionary entry;
+    entry["id"] = row.id;
+    entry["symbol_id"] = row.id;
+    entry["project_id"] = row.project_id;
+    entry["script_file_id"] = row.script_file_id;
+    entry["symbol_slot"] = row.symbol_slot;
+    if (row.parent_symbol_slot.has_value()) {
+        entry["parent_symbol_slot"] = row.parent_symbol_slot.value();
+    } else {
+        entry["parent_symbol_slot"] = Variant();
+    }
+    if (row.parent_symbol_id.has_value()) {
+        entry["parent_symbol_id"] = row.parent_symbol_id.value();
+    } else {
+        entry["parent_symbol_id"] = Variant();
+    }
+    entry["symbol_kind"] = from_utf8(row.symbol_kind);
+    entry["name"] = from_utf8(row.name);
+    entry["qualified_name"] = from_utf8(row.qualified_name);
+    entry["declared_type"] = from_utf8(row.declared_type);
+    entry["return_type"] = from_utf8(row.return_type);
+    entry["default_value_excerpt"] = from_utf8(row.default_value_excerpt);
+    entry["visibility"] = from_utf8(row.visibility);
+    entry["flags"] = row.flags;
+    entry["doc_comment_state"] = from_utf8(row.doc_comment_state);
+    entry["symbol_name"] = from_utf8(row.symbol_name);
+    entry["class_name"] = from_utf8(row.class_name);
+    entry["language"] = from_utf8(row.language);
+    entry["signature_text"] = from_utf8(row.signature_text);
+    entry["symbol_flags"] = row.symbol_flags;
+    entry["line_start"] = row.line_start;
+    entry["column_start"] = row.column_start;
+    entry["line_end"] = row.line_end;
+    entry["column_end"] = row.column_end;
+    entry["parser_version"] = row.parser_version;
+    entry["last_parsed_generation"] = row.last_parsed_generation;
+    entry["last_seen_scan_run_id"] = row.last_seen_scan_run_id;
+    entry["created_at_unix"] = row.created_at_unix;
+    entry["updated_at_unix"] = row.updated_at_unix;
+    return entry;
+}
+
+Dictionary reference_row_to_dictionary(const gotool::project_scanner::ScriptReferenceRow &row) {
+    Dictionary entry;
+    entry["id"] = row.id;
+    entry["reference_id"] = row.id;
+    entry["project_id"] = row.project_id;
+    entry["script_file_id"] = row.script_file_id;
+    entry["source_script_file_id"] = row.source_script_file_id;
+    if (row.source_symbol_id.has_value()) {
+        entry["source_symbol_id"] = row.source_symbol_id.value();
+    } else {
+        entry["source_symbol_id"] = Variant();
+    }
+    if (row.target_file_id.has_value()) {
+        entry["target_file_id"] = row.target_file_id.value();
+    } else {
+        entry["target_file_id"] = Variant();
+    }
+    if (row.target_symbol_id.has_value()) {
+        entry["target_symbol_id"] = row.target_symbol_id.value();
+    } else {
+        entry["target_symbol_id"] = Variant();
+    }
+    entry["target_project_relative_path"] = from_utf8(row.target_project_relative_path);
+    entry["target_path"] = from_utf8(row.target_project_relative_path.empty() ? "" : "res://" + row.target_project_relative_path);
+    entry["target_class_name"] = from_utf8(row.target_class_name);
+    entry["target_symbol_name"] = from_utf8(row.target_symbol_name);
+    entry["target_resource_uid"] = from_utf8(row.target_resource_uid);
+    entry["reference_kind"] = from_utf8(row.reference_kind);
+    entry["reference_text"] = from_utf8(row.reference_text);
+    entry["source_line"] = row.source_line;
+    entry["source_column"] = row.source_column;
+    entry["source_line_end"] = row.source_line_end;
+    entry["source_column_end"] = row.source_column_end;
+    entry["confidence"] = row.confidence;
+    entry["is_dynamic"] = row.is_dynamic;
+    entry["is_resolved"] = row.is_resolved;
+    entry["is_unresolved"] = row.is_unresolved;
+    entry["parser_version"] = row.parser_version;
+    entry["scan_generation"] = row.scan_generation;
+    entry["created_at_unix"] = row.created_at_unix;
+    return entry;
+}
+
+Dictionary scene_attachment_row_to_dictionary(const gotool::project_scanner::SceneScriptAttachmentRow &row) {
+    Dictionary entry;
+    entry["id"] = row.id;
+    entry["attachment_id"] = row.id;
+    entry["project_id"] = row.project_id;
+    entry["scene_file_id"] = row.scene_file_id;
+    entry["node_path"] = from_utf8(row.node_path);
+    entry["node_name"] = from_utf8(row.node_name);
+    entry["node_type"] = from_utf8(row.node_type);
+    entry["attachment_kind"] = from_utf8(row.attachment_kind);
+    entry["ext_resource_id"] = from_utf8(row.ext_resource_id);
+    entry["ext_resource_slot"] = from_utf8(row.ext_resource_slot);
+    entry["script_resource_path"] = from_utf8(row.script_resource_path);
+    entry["script_uid"] = from_utf8(row.script_uid);
+    entry["script_project_relative_path"] = from_utf8(row.script_project_relative_path);
+    entry["script_path"] = from_utf8(row.script_project_relative_path.empty() ? "" : "res://" + row.script_project_relative_path);
+    entry["script_resource_uid"] = from_utf8(row.script_resource_uid);
+    if (row.script_file_id.has_value()) {
+        entry["script_file_id"] = row.script_file_id.value();
+    } else {
+        entry["script_file_id"] = Variant();
+    }
+    if (row.script_symbol_id.has_value()) {
+        entry["script_symbol_id"] = row.script_symbol_id.value();
+    } else {
+        entry["script_symbol_id"] = Variant();
+    }
+    entry["is_dynamic"] = row.is_dynamic;
+    entry["is_resolved"] = row.is_resolved;
+    entry["source_line"] = row.source_line;
+    entry["source_column"] = row.source_column;
+    entry["parser_version"] = row.parser_version;
+    entry["scan_generation"] = row.scan_generation;
+    entry["created_at_unix"] = row.created_at_unix;
+    return entry;
+}
+
+Dictionary script_intelligence_summary_row_to_dictionary(
+    const gotool::project_scanner::ScriptIntelligenceSummaryRow &row
+) {
+    Dictionary entry;
+    entry["script_file_id"] = row.script_file_id;
+    entry["symbol_count"] = row.symbol_count;
+    entry["function_count"] = row.function_count;
+    entry["property_count"] = row.property_count;
+    entry["parameter_count"] = row.parameter_count;
+    entry["doc_comment_count"] = row.doc_comment_count;
+    entry["reference_count"] = row.reference_count;
+    entry["unresolved_reference_count"] = row.unresolved_reference_count;
+    entry["dynamic_reference_count"] = row.dynamic_reference_count;
+    return entry;
+}
+
 Dictionary metrics_to_dictionary(const gotool::project_scanner::ScanMetrics &metrics) {
     Dictionary result;
     result["total_wall_ms"] = metrics.total_wall_ms;
@@ -334,6 +516,9 @@ Dictionary metrics_to_dictionary(const gotool::project_scanner::ScanMetrics &met
     result["classification_ms"] = metrics.classification_ms;
     result["script_parse_ms"] = metrics.script_parse_ms;
     result["dependency_parse_ms"] = metrics.dependency_parse_ms;
+    result["full_symbol_parse_ms"] = metrics.full_symbol_parse_ms;
+    result["doc_comment_parse_ms"] = metrics.doc_comment_parse_ms;
+    result["scene_attachment_parse_ms"] = metrics.scene_attachment_parse_ms;
     result["tokenizer_ms"] = metrics.tokenizer_ms;
     result["sqlite_write_ms"] = metrics.sqlite_write_ms;
     result["sqlite_stage_insert_ms"] = metrics.sqlite_stage_insert_ms;
@@ -362,6 +547,8 @@ Dictionary metrics_to_dictionary(const gotool::project_scanner::ScanMetrics &met
     result["scripts_candidates"] = metrics.scripts_candidates;
     result["scripts_parsed"] = metrics.scripts_parsed;
     result["scripts_skipped_clean"] = metrics.scripts_skipped_clean;
+    result["symbols_skipped_clean"] = metrics.symbols_skipped_clean;
+    result["scenes_skipped_clean"] = metrics.scenes_skipped_clean;
     result["scripts_dependency_parsed"] = metrics.scripts_dependency_parsed;
     result["scripts_dependency_skipped_clean"] = metrics.scripts_dependency_skipped_clean;
     result["script_lines_scanned"] = metrics.script_lines_scanned;
@@ -370,6 +557,10 @@ Dictionary metrics_to_dictionary(const gotool::project_scanner::ScanMetrics &met
     result["parser_bytes_read"] = metrics.parser_bytes_read;
     result["parser_tokens_generated"] = metrics.parser_tokens_generated;
     result["parser_limit_exceeded_count"] = metrics.parser_limit_exceeded_count;
+    result["symbol_rows_created"] = metrics.symbol_rows_created;
+    result["reference_rows_created"] = metrics.reference_rows_created;
+    result["doc_comment_rows_created"] = metrics.doc_comment_rows_created;
+    result["scene_attachment_rows_created"] = metrics.scene_attachment_rows_created;
     result["dependency_records_created"] = metrics.dependency_records_created;
     result["unresolved_dependency_count"] = metrics.unresolved_dependency_count;
     result["dynamic_dependency_count"] = metrics.dynamic_dependency_count;
@@ -644,6 +835,76 @@ void GodotProjectContext::_bind_methods() {
     ClassDB::bind_method(
         D_METHOD("list_dynamic_dependencies"),
         &GodotProjectContext::list_dynamic_dependencies
+    );
+
+    ClassDB::bind_method(
+        D_METHOD("list_symbols_for_script", "script_file_id", "filter"),
+        &GodotProjectContext::list_symbols_for_script
+    );
+
+    ClassDB::bind_method(
+        D_METHOD("list_functions_for_script", "script_file_id"),
+        &GodotProjectContext::list_functions_for_script
+    );
+
+    ClassDB::bind_method(
+        D_METHOD("list_properties_for_script", "script_file_id"),
+        &GodotProjectContext::list_properties_for_script
+    );
+
+    ClassDB::bind_method(
+        D_METHOD("list_parameters_for_function", "function_symbol_id"),
+        &GodotProjectContext::list_parameters_for_function
+    );
+
+    ClassDB::bind_method(
+        D_METHOD("list_doc_comment_gaps", "filter"),
+        &GodotProjectContext::list_doc_comment_gaps
+    );
+
+    ClassDB::bind_method(
+        D_METHOD("list_references_for_script", "script_file_id"),
+        &GodotProjectContext::list_references_for_script
+    );
+
+    ClassDB::bind_method(
+        D_METHOD("list_references_from_symbol", "symbol_id"),
+        &GodotProjectContext::list_references_from_symbol
+    );
+
+    ClassDB::bind_method(
+        D_METHOD("list_unresolved_references", "filter"),
+        &GodotProjectContext::list_unresolved_references
+    );
+
+    ClassDB::bind_method(
+        D_METHOD("list_dynamic_references", "filter"),
+        &GodotProjectContext::list_dynamic_references
+    );
+
+    ClassDB::bind_method(
+        D_METHOD("list_scene_script_attachments", "filter"),
+        &GodotProjectContext::list_scene_script_attachments
+    );
+
+    ClassDB::bind_method(
+        D_METHOD("list_scenes_using_script", "script_file_id"),
+        &GodotProjectContext::list_scenes_using_script
+    );
+
+    ClassDB::bind_method(
+        D_METHOD("list_scripts_attached_to_scene", "scene_file_id"),
+        &GodotProjectContext::list_scripts_attached_to_scene
+    );
+
+    ClassDB::bind_method(
+        D_METHOD("get_symbol_details", "symbol_id"),
+        &GodotProjectContext::get_symbol_details
+    );
+
+    ClassDB::bind_method(
+        D_METHOD("get_script_intelligence_summary", "script_file_id"),
+        &GodotProjectContext::get_script_intelligence_summary
     );
 
     ClassDB::bind_method(
@@ -2028,6 +2289,406 @@ Array GodotProjectContext::list_dynamic_dependencies() const {
     }
 
     return rows;
+}
+
+Array GodotProjectContext::list_symbols_for_script(int64_t script_file_id, const Dictionary &filter) const {
+    Array rows;
+
+    sync_last_scan_results_from_active_state();
+
+    if (database_ == nullptr || current_project_id_ <= 0 || script_file_id <= 0) {
+        return rows;
+    }
+
+    try {
+        std::lock_guard<std::mutex> db_lock(database_mutex_);
+        if (database_ == nullptr) {
+            return Array();
+        }
+
+        gotool::project_scanner::ScanRepository repository(*database_);
+        const std::vector<gotool::project_scanner::ScriptSymbolRow> symbols = repository.list_symbols_for_script(
+            current_project_id_,
+            script_file_id,
+            symbol_query_filter_from_dictionary(filter)
+        );
+
+        for (const gotool::project_scanner::ScriptSymbolRow &symbol : symbols) {
+            rows.append(symbol_row_to_dictionary(symbol));
+        }
+    } catch (...) {
+        return Array();
+    }
+
+    return rows;
+}
+
+Array GodotProjectContext::list_functions_for_script(int64_t script_file_id) const {
+    Array rows;
+
+    sync_last_scan_results_from_active_state();
+
+    if (database_ == nullptr || current_project_id_ <= 0 || script_file_id <= 0) {
+        return rows;
+    }
+
+    try {
+        std::lock_guard<std::mutex> db_lock(database_mutex_);
+        if (database_ == nullptr) {
+            return Array();
+        }
+
+        gotool::project_scanner::ScanRepository repository(*database_);
+        const std::vector<gotool::project_scanner::ScriptSymbolRow> symbols =
+            repository.list_functions_for_script(current_project_id_, script_file_id);
+
+        for (const gotool::project_scanner::ScriptSymbolRow &symbol : symbols) {
+            rows.append(symbol_row_to_dictionary(symbol));
+        }
+    } catch (...) {
+        return Array();
+    }
+
+    return rows;
+}
+
+Array GodotProjectContext::list_properties_for_script(int64_t script_file_id) const {
+    Array rows;
+
+    sync_last_scan_results_from_active_state();
+
+    if (database_ == nullptr || current_project_id_ <= 0 || script_file_id <= 0) {
+        return rows;
+    }
+
+    try {
+        std::lock_guard<std::mutex> db_lock(database_mutex_);
+        if (database_ == nullptr) {
+            return Array();
+        }
+
+        gotool::project_scanner::ScanRepository repository(*database_);
+        const std::vector<gotool::project_scanner::ScriptSymbolRow> symbols =
+            repository.list_properties_for_script(current_project_id_, script_file_id);
+
+        for (const gotool::project_scanner::ScriptSymbolRow &symbol : symbols) {
+            rows.append(symbol_row_to_dictionary(symbol));
+        }
+    } catch (...) {
+        return Array();
+    }
+
+    return rows;
+}
+
+Array GodotProjectContext::list_parameters_for_function(int64_t function_symbol_id) const {
+    Array rows;
+
+    sync_last_scan_results_from_active_state();
+
+    if (database_ == nullptr || current_project_id_ <= 0 || function_symbol_id <= 0) {
+        return rows;
+    }
+
+    try {
+        std::lock_guard<std::mutex> db_lock(database_mutex_);
+        if (database_ == nullptr) {
+            return Array();
+        }
+
+        gotool::project_scanner::ScanRepository repository(*database_);
+        const std::vector<gotool::project_scanner::ScriptSymbolRow> symbols =
+            repository.list_parameters_for_function(current_project_id_, function_symbol_id);
+
+        for (const gotool::project_scanner::ScriptSymbolRow &symbol : symbols) {
+            rows.append(symbol_row_to_dictionary(symbol));
+        }
+    } catch (...) {
+        return Array();
+    }
+
+    return rows;
+}
+
+Array GodotProjectContext::list_doc_comment_gaps(const Dictionary &filter) const {
+    Array rows;
+
+    sync_last_scan_results_from_active_state();
+
+    if (database_ == nullptr || current_project_id_ <= 0) {
+        return rows;
+    }
+
+    try {
+        std::lock_guard<std::mutex> db_lock(database_mutex_);
+        if (database_ == nullptr) {
+            return Array();
+        }
+
+        gotool::project_scanner::ScanRepository repository(*database_);
+        const std::vector<gotool::project_scanner::ScriptSymbolRow> symbols = repository.list_doc_comment_gaps(
+            current_project_id_,
+            doc_comment_gap_filter_from_dictionary(filter)
+        );
+
+        for (const gotool::project_scanner::ScriptSymbolRow &symbol : symbols) {
+            rows.append(symbol_row_to_dictionary(symbol));
+        }
+    } catch (...) {
+        return Array();
+    }
+
+    return rows;
+}
+
+Array GodotProjectContext::list_references_for_script(int64_t script_file_id) const {
+    Array rows;
+
+    sync_last_scan_results_from_active_state();
+
+    if (database_ == nullptr || current_project_id_ <= 0 || script_file_id <= 0) {
+        return rows;
+    }
+
+    try {
+        std::lock_guard<std::mutex> db_lock(database_mutex_);
+        if (database_ == nullptr) {
+            return Array();
+        }
+
+        gotool::project_scanner::ScanRepository repository(*database_);
+        const std::vector<gotool::project_scanner::ScriptReferenceRow> references =
+            repository.list_references_for_script(current_project_id_, script_file_id);
+
+        for (const gotool::project_scanner::ScriptReferenceRow &reference : references) {
+            rows.append(reference_row_to_dictionary(reference));
+        }
+    } catch (...) {
+        return Array();
+    }
+
+    return rows;
+}
+
+Array GodotProjectContext::list_references_from_symbol(int64_t symbol_id) const {
+    Array rows;
+
+    sync_last_scan_results_from_active_state();
+
+    if (database_ == nullptr || current_project_id_ <= 0 || symbol_id <= 0) {
+        return rows;
+    }
+
+    try {
+        std::lock_guard<std::mutex> db_lock(database_mutex_);
+        if (database_ == nullptr) {
+            return Array();
+        }
+
+        gotool::project_scanner::ScanRepository repository(*database_);
+        const std::vector<gotool::project_scanner::ScriptReferenceRow> references =
+            repository.list_references_from_symbol(current_project_id_, symbol_id);
+
+        for (const gotool::project_scanner::ScriptReferenceRow &reference : references) {
+            rows.append(reference_row_to_dictionary(reference));
+        }
+    } catch (...) {
+        return Array();
+    }
+
+    return rows;
+}
+
+Array GodotProjectContext::list_unresolved_references(const Dictionary &filter) const {
+    Array rows;
+
+    sync_last_scan_results_from_active_state();
+
+    if (database_ == nullptr || current_project_id_ <= 0) {
+        return rows;
+    }
+
+    try {
+        std::lock_guard<std::mutex> db_lock(database_mutex_);
+        if (database_ == nullptr) {
+            return Array();
+        }
+
+        gotool::project_scanner::ScanRepository repository(*database_);
+        const std::vector<gotool::project_scanner::ScriptReferenceRow> references =
+            repository.list_unresolved_references(current_project_id_, reference_query_filter_from_dictionary(filter));
+
+        for (const gotool::project_scanner::ScriptReferenceRow &reference : references) {
+            rows.append(reference_row_to_dictionary(reference));
+        }
+    } catch (...) {
+        return Array();
+    }
+
+    return rows;
+}
+
+Array GodotProjectContext::list_dynamic_references(const Dictionary &filter) const {
+    Array rows;
+
+    sync_last_scan_results_from_active_state();
+
+    if (database_ == nullptr || current_project_id_ <= 0) {
+        return rows;
+    }
+
+    try {
+        std::lock_guard<std::mutex> db_lock(database_mutex_);
+        if (database_ == nullptr) {
+            return Array();
+        }
+
+        gotool::project_scanner::ScanRepository repository(*database_);
+        const std::vector<gotool::project_scanner::ScriptReferenceRow> references =
+            repository.list_dynamic_references(current_project_id_, reference_query_filter_from_dictionary(filter));
+
+        for (const gotool::project_scanner::ScriptReferenceRow &reference : references) {
+            rows.append(reference_row_to_dictionary(reference));
+        }
+    } catch (...) {
+        return Array();
+    }
+
+    return rows;
+}
+
+Array GodotProjectContext::list_scene_script_attachments(const Dictionary &filter) const {
+    Array rows;
+
+    sync_last_scan_results_from_active_state();
+
+    if (database_ == nullptr || current_project_id_ <= 0) {
+        return rows;
+    }
+
+    try {
+        std::lock_guard<std::mutex> db_lock(database_mutex_);
+        if (database_ == nullptr) {
+            return Array();
+        }
+
+        gotool::project_scanner::ScanRepository repository(*database_);
+        const std::vector<gotool::project_scanner::SceneScriptAttachmentRow> attachments =
+            repository.list_scene_script_attachments(current_project_id_, scene_attachment_filter_from_dictionary(filter));
+
+        for (const gotool::project_scanner::SceneScriptAttachmentRow &attachment : attachments) {
+            rows.append(scene_attachment_row_to_dictionary(attachment));
+        }
+    } catch (...) {
+        return Array();
+    }
+
+    return rows;
+}
+
+Array GodotProjectContext::list_scenes_using_script(int64_t script_file_id) const {
+    Array rows;
+
+    sync_last_scan_results_from_active_state();
+
+    if (database_ == nullptr || current_project_id_ <= 0 || script_file_id <= 0) {
+        return rows;
+    }
+
+    try {
+        std::lock_guard<std::mutex> db_lock(database_mutex_);
+        if (database_ == nullptr) {
+            return Array();
+        }
+
+        gotool::project_scanner::ScanRepository repository(*database_);
+        const std::vector<gotool::project_scanner::SceneScriptAttachmentRow> attachments =
+            repository.list_scenes_using_script(current_project_id_, script_file_id);
+
+        for (const gotool::project_scanner::SceneScriptAttachmentRow &attachment : attachments) {
+            rows.append(scene_attachment_row_to_dictionary(attachment));
+        }
+    } catch (...) {
+        return Array();
+    }
+
+    return rows;
+}
+
+Array GodotProjectContext::list_scripts_attached_to_scene(int64_t scene_file_id) const {
+    Array rows;
+
+    sync_last_scan_results_from_active_state();
+
+    if (database_ == nullptr || current_project_id_ <= 0 || scene_file_id <= 0) {
+        return rows;
+    }
+
+    try {
+        std::lock_guard<std::mutex> db_lock(database_mutex_);
+        if (database_ == nullptr) {
+            return Array();
+        }
+
+        gotool::project_scanner::ScanRepository repository(*database_);
+        const std::vector<gotool::project_scanner::SceneScriptAttachmentRow> attachments =
+            repository.list_scripts_attached_to_scene(current_project_id_, scene_file_id);
+
+        for (const gotool::project_scanner::SceneScriptAttachmentRow &attachment : attachments) {
+            rows.append(scene_attachment_row_to_dictionary(attachment));
+        }
+    } catch (...) {
+        return Array();
+    }
+
+    return rows;
+}
+
+Dictionary GodotProjectContext::get_symbol_details(int64_t symbol_id) const {
+    sync_last_scan_results_from_active_state();
+
+    if (database_ == nullptr || current_project_id_ <= 0 || symbol_id <= 0) {
+        return Dictionary();
+    }
+
+    try {
+        std::lock_guard<std::mutex> db_lock(database_mutex_);
+        if (database_ == nullptr) {
+            return Dictionary();
+        }
+
+        gotool::project_scanner::ScanRepository repository(*database_);
+        const std::optional<gotool::project_scanner::ScriptSymbolRow> symbol =
+            repository.get_symbol_details(current_project_id_, symbol_id);
+        if (!symbol.has_value()) {
+            return Dictionary();
+        }
+        return symbol_row_to_dictionary(symbol.value());
+    } catch (...) {
+        return Dictionary();
+    }
+}
+
+Dictionary GodotProjectContext::get_script_intelligence_summary(int64_t script_file_id) const {
+    sync_last_scan_results_from_active_state();
+
+    if (database_ == nullptr || current_project_id_ <= 0 || script_file_id <= 0) {
+        return Dictionary();
+    }
+
+    try {
+        std::lock_guard<std::mutex> db_lock(database_mutex_);
+        if (database_ == nullptr) {
+            return Dictionary();
+        }
+
+        gotool::project_scanner::ScanRepository repository(*database_);
+        const gotool::project_scanner::ScriptIntelligenceSummaryRow summary =
+            repository.get_script_intelligence_summary(current_project_id_, script_file_id);
+        return script_intelligence_summary_row_to_dictionary(summary);
+    } catch (...) {
+        return Dictionary();
+    }
 }
 
 Array GodotProjectContext::list_dependency_cycles() const {

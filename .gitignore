@@ -28,6 +28,25 @@ build/linux_failed.log
 docs/*
 docs/sprint-*
 
+# Native build/test artifacts
+*.obj
+*.dll
+*.so
+*.dylib
+*.exe
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.sqlite3
+*.db
+.sconsign.dblite
+extension_api.json
+src/gen/doc_data.gen.cpp
+build/benchmarks/
+project/addons/GoToolCenter/bin/*
+project/addons/gotool_center/bin/*
+
 # Github specific
 .github/hooks/*
 .github/workflows/hooks/*

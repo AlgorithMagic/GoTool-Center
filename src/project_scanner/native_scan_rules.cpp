@@ -889,6 +889,7 @@ const char *to_string(DirtyReason value) {
         case DirtyReason::FileIdentityChanged: return "file_identity_changed";
         case DirtyReason::ParserVersionChanged: return "parser_version_changed";
         case DirtyReason::DependencyParserVersionChanged: return "dependency_parser_version_changed";
+        case DirtyReason::SceneParserVersionChanged: return "scene_parser_version_changed";
         case DirtyReason::ClassifierVersionChanged: return "classifier_version_changed";
         case DirtyReason::PriorParseFailedRetry: return "prior_parse_failed_retry";
         case DirtyReason::WatcherInvalidated: return "watcher_invalidated";
