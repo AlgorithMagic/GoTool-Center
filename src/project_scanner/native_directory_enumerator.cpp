@@ -6,37 +6,40 @@
 #include <atomic>
 #include <chrono>
 #include <mutex>
-#include <system_error>
 #include <thread>
 #include <utility>
 #include <vector>
 
-#if defined(_WIN32)
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
+#ifdef _WIN32
+#    ifndef NOMINMAX
+#        define NOMINMAX
+#    endif
+#    include <windows.h>
 #else
-#include <dirent.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <unistd.h>
+#    include <dirent.h>
+#    include <sys/stat.h>
+#    include <sys/types.h>
+#    include <unistd.h>
 #endif
 
 namespace gotool::project_scanner {
 
 namespace {
 
-bool is_cancelled(const EnumerationOptions &options) {
-    return options.cancel_requested != nullptr && options.cancel_requested->load(std::memory_order_relaxed);
+bool is_cancelled(const EnumerationOptions& options)
+{
+    return options.cancel_requested != nullptr &&
+           options.cancel_requested->load(std::memory_order_relaxed);
 }
 
-std::string_view file_name_view_from_path(std::string_view path) {
+std::string_view file_name_view_from_path(std::string_view path)
+{
     const size_t slash = path.rfind('/');
     return slash == std::string::npos ? path : path.substr(slash + 1);
 }
 
-std::string extension_from_lower_name(std::string_view name_lower) {
+std::string extension_from_lower_name(std::string_view name_lower)
+{
     const size_t dot = name_lower.rfind('.');
 
     if (dot == std::string::npos || dot == 0 || dot + 1 >= name_lower.size()) {
@@ -46,24 +49,17 @@ std::string extension_from_lower_name(std::string_view name_lower) {
     return std::string(name_lower.substr(dot));
 }
 
-int64_t finish_record(
-    EntryRecord &record,
-    PathArena &arena,
-    std::string_view project_path,
-    std::string_view name,
-    int64_t parent_record_index,
-    EntryKind kind,
-    bool hidden
-) {
+int64_t finish_record(EntryRecord& record, PathArena& arena, std::string_view project_path,
+                      std::string_view name, int64_t parent_record_index, EntryKind kind,
+                      bool hidden)
+{
     const auto classification_start = std::chrono::steady_clock::now();
 
     const std::string project_path_lower = lower_ascii(project_path);
     const std::string_view lower_name_view = file_name_view_from_path(project_path_lower);
 
     const std::string extension =
-        kind == EntryKind::Directory
-            ? std::string()
-            : extension_from_lower_name(lower_name_view);
+        kind == EntryKind::Directory ? std::string() : extension_from_lower_name(lower_name_view);
 
     record.path_offset = arena.append(project_path);
     record.path_length = static_cast<uint32_t>(project_path.size());
@@ -93,20 +89,21 @@ int64_t finish_record(
     record.type_hint_source = type_hint_source_for(record.godot_type_hint);
 
     const auto classification_end = std::chrono::steady_clock::now();
-    return std::chrono::duration_cast<std::chrono::nanoseconds>(classification_end - classification_start).count();
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(classification_end -
+                                                                classification_start)
+        .count();
 }
 
-void copy_record_into_arena(
-    const EntryRecord &source,
-    const PathArena &source_arena,
-    PathArena &target_arena,
-    std::vector<EntryRecord> &target_records
-) {
+void copy_record_into_arena(const EntryRecord& source, const PathArena& source_arena,
+                            PathArena& target_arena, std::vector<EntryRecord>& target_records)
+{
     EntryRecord copied = source;
-    copied.path_offset = target_arena.append(source_arena.view(source.path_offset, source.path_length));
+    copied.path_offset =
+        target_arena.append(source_arena.view(source.path_offset, source.path_length));
     copied.lower_path_offset =
         target_arena.append(source_arena.view(source.lower_path_offset, source.lower_path_length));
-    copied.name_offset = target_arena.append(source_arena.view(source.name_offset, source.name_length));
+    copied.name_offset =
+        target_arena.append(source_arena.view(source.name_offset, source.name_length));
     copied.extension_offset =
         target_arena.append(source_arena.view(source.extension_offset, source.extension_length));
 
@@ -115,72 +112,58 @@ void copy_record_into_arena(
     target_records.push_back(copied);
 }
 
-void sort_records_if_requested(
-    const EnumerationOptions &options,
-    PathArena &arena,
-    std::vector<EntryRecord> &records
-) {
+void sort_records_if_requested(const EnumerationOptions& options, PathArena& arena,
+                               std::vector<EntryRecord>& records)
+{
     if (!options.deterministic_record_order || records.empty()) {
         return;
     }
 
-    std::sort(records.begin(), records.end(), [&arena](const EntryRecord &left, const EntryRecord &right) {
-        const std::string_view left_path = arena.view(left.path_offset, left.path_length);
-        const std::string_view right_path = arena.view(right.path_offset, right.path_length);
+    std::sort(
+        records.begin(), records.end(),
+        [&arena](const EntryRecord& left, const EntryRecord& right) {
+            const std::string_view left_path = arena.view(left.path_offset, left.path_length);
+            const std::string_view right_path = arena.view(right.path_offset, right.path_length);
 
-        if (left_path == right_path) {
-            if (left.entry_kind != right.entry_kind) {
-                return static_cast<int>(left.entry_kind) < static_cast<int>(right.entry_kind);
+            if (left_path == right_path) {
+                if (left.entry_kind != right.entry_kind) {
+                    return static_cast<int>(left.entry_kind) < static_cast<int>(right.entry_kind);
+                }
+
+                return left.extension_id < right.extension_id;
             }
 
-            return left.extension_id < right.extension_id;
-        }
+            return left_path < right_path;
+        });
 
-        return left_path < right_path;
-    });
-
-    for (EntryRecord &record : records) {
+    for (EntryRecord& record : records) {
         record.parent_record_index = -1;
     }
 }
 
-#if defined(_WIN32)
+#ifdef _WIN32
 
-std::string wide_to_utf8(const std::wstring &value) {
+std::string wide_to_utf8(const std::wstring& value)
+{
     if (value.empty()) {
         return "";
     }
 
     const int required = WideCharToMultiByte(
-        CP_UTF8,
-        0,
-        value.c_str(),
-        static_cast<int>(value.size()),
-        nullptr,
-        0,
-        nullptr,
-        nullptr
-    );
+        CP_UTF8, 0, value.c_str(), static_cast<int>(value.size()), nullptr, 0, nullptr, nullptr);
 
     if (required <= 0) {
         return "";
     }
 
     std::string output(static_cast<size_t>(required), '\0');
-    WideCharToMultiByte(
-        CP_UTF8,
-        0,
-        value.c_str(),
-        static_cast<int>(value.size()),
-        output.data(),
-        required,
-        nullptr,
-        nullptr
-    );
+    WideCharToMultiByte(CP_UTF8, 0, value.c_str(), static_cast<int>(value.size()), output.data(),
+                        required, nullptr, nullptr);
     return output;
 }
 
-int64_t filetime_to_unix_ns(const FILETIME &filetime) {
+int64_t filetime_to_unix_ns(const FILETIME& filetime)
+{
     ULARGE_INTEGER value;
     value.LowPart = filetime.dwLowDateTime;
     value.HighPart = filetime.dwHighDateTime;
@@ -193,17 +176,13 @@ int64_t filetime_to_unix_ns(const FILETIME &filetime) {
     return static_cast<int64_t>((value.QuadPart - WINDOWS_TO_UNIX_100NS) * 100ULL);
 }
 
-void enumerate_windows_directory(
-    const EnumerationOptions &options,
-    const std::filesystem::path &absolute_dir,
-    const std::string &relative_dir,
-    int64_t parent_record_index,
-    PathArena &arena,
-    std::vector<EntryRecord> &records,
-    EnumerationResult &result,
-    bool recurse_children,
-    int64_t &classification_ns_total
-) {
+void enumerate_windows_directory(const EnumerationOptions& options,
+                                 const std::filesystem::path& absolute_dir,
+                                 const std::string& relative_dir, int64_t parent_record_index,
+                                 PathArena& arena, std::vector<EntryRecord>& records,
+                                 EnumerationResult& result, bool recurse_children,
+                                 int64_t& classification_ns_total)
+{
     if (is_cancelled(options)) {
         result.completed = false;
         return;
@@ -211,14 +190,8 @@ void enumerate_windows_directory(
 
     std::filesystem::path search_path = absolute_dir / L"*";
     WIN32_FIND_DATAW data;
-    HANDLE handle = FindFirstFileExW(
-        search_path.c_str(),
-        FindExInfoBasic,
-        &data,
-        FindExSearchNameMatch,
-        nullptr,
-        FIND_FIRST_EX_LARGE_FETCH
-    );
+    HANDLE handle = FindFirstFileExW(search_path.c_str(), FindExInfoBasic, &data,
+                                     FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH);
 
     if (handle == INVALID_HANDLE_VALUE) {
         const DWORD error = GetLastError();
@@ -228,7 +201,7 @@ void enumerate_windows_directory(
         return;
     }
 
-    do {
+    for (bool has_entry = true; has_entry; has_entry = FindNextFileW(handle, &data) != 0) {
         const std::wstring wide_name(data.cFileName);
         if (wide_name == L"." || wide_name == L"..") {
             continue;
@@ -239,15 +212,23 @@ void enumerate_windows_directory(
             continue;
         }
 
-        const bool hidden = (data.dwFileAttributes & FILE_ATTRIBUTE_HIDDEN) != 0 || name.front() == '.';
+        const bool hidden =
+            (data.dwFileAttributes & FILE_ATTRIBUTE_HIDDEN) != 0 || name.front() == '.';
         if (hidden && !options.include_hidden) {
             continue;
         }
 
-        const bool is_directory = (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
-        const std::string project_path = relative_dir.empty() ? name : relative_dir + "/" + name;
+        const bool is_directory{(data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0};
+        std::string project_path;
+        if (relative_dir.empty()) {
+            project_path = name;
+        } else {
+            project_path.reserve(relative_dir.size() + 1 + name.size());
+            project_path.assign(relative_dir).append("/").append(name);
+        }
 
-        if (options.skip_policy != nullptr && options.skip_policy->should_skip_normalized(project_path)) {
+        if (options.skip_policy != nullptr &&
+            options.skip_policy->should_skip_normalized(project_path)) {
             if (is_directory) {
                 ++result.dirs_skipped;
             }
@@ -255,15 +236,9 @@ void enumerate_windows_directory(
         }
 
         EntryRecord record;
-        classification_ns_total += finish_record(
-            record,
-            arena,
-            project_path,
-            name,
-            parent_record_index,
-            is_directory ? EntryKind::Directory : EntryKind::File,
-            hidden
-        );
+        classification_ns_total +=
+            finish_record(record, arena, project_path, name, parent_record_index,
+                          is_directory ? EntryKind::Directory : EntryKind::File, hidden);
         record.modified_time_ns = filetime_to_unix_ns(data.ftLastWriteTime);
         if (!is_directory) {
             LARGE_INTEGER size;
@@ -272,7 +247,7 @@ void enumerate_windows_directory(
             record.size_bytes = size.QuadPart;
         }
 
-        const int64_t record_index = static_cast<int64_t>(records.size());
+        const auto record_index = static_cast<int64_t>(records.size());
         records.push_back(record);
 
         if (is_directory) {
@@ -282,57 +257,48 @@ void enumerate_windows_directory(
                 continue;
             }
 
-            const bool is_reparse_point = (data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+            const bool is_reparse_point =
+                (data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
             if (!is_reparse_point) {
-                enumerate_windows_directory(
-                    options,
-                    absolute_dir / wide_name,
-                    project_path,
-                    record_index,
-                    arena,
-                    records,
-                    result,
-                    true,
-                    classification_ns_total
-                );
+                enumerate_windows_directory(options, absolute_dir / wide_name, project_path,
+                                            record_index, arena, records, result, true,
+                                            classification_ns_total);
             }
         } else {
             ++result.files_seen;
         }
-    } while (FindNextFileW(handle, &data));
+    }
 
     FindClose(handle);
 }
 
 #else
 
-int64_t timespec_to_ns(const timespec &value) {
-    return static_cast<int64_t>(value.tv_sec) * 1'000'000'000LL + static_cast<int64_t>(value.tv_nsec);
+int64_t timespec_to_ns(const timespec& value)
+{
+    return static_cast<int64_t>(value.tv_sec) * 1'000'000'000LL +
+           static_cast<int64_t>(value.tv_nsec);
 }
 
-void enumerate_posix_directory(
-    const EnumerationOptions &options,
-    const std::filesystem::path &absolute_dir,
-    const std::string &relative_dir,
-    int64_t parent_record_index,
-    PathArena &arena,
-    std::vector<EntryRecord> &records,
-    EnumerationResult &result,
-    bool recurse_children,
-    int64_t &classification_ns_total
-) {
+void enumerate_posix_directory(const EnumerationOptions& options,
+                               const std::filesystem::path& absolute_dir,
+                               const std::string& relative_dir, int64_t parent_record_index,
+                               PathArena& arena, std::vector<EntryRecord>& records,
+                               EnumerationResult& result, bool recurse_children,
+                               int64_t& classification_ns_total)
+{
     if (is_cancelled(options)) {
         result.completed = false;
         return;
     }
 
-    DIR *dir = opendir(absolute_dir.c_str());
+    DIR* dir = opendir(absolute_dir.c_str());
     if (dir == nullptr) {
         result.errors.push_back("failed_to_enumerate:" + relative_dir);
         return;
     }
 
-    while (dirent *entry = readdir(dir)) {
+    while (dirent* entry = readdir(dir)) {
         const std::string name(entry->d_name);
         if (name == "." || name == "..") {
             continue;
@@ -343,17 +309,24 @@ void enumerate_posix_directory(
             continue;
         }
 
-        const std::string project_path = relative_dir.empty() ? name : relative_dir + "/" + name;
+        std::string project_path;
+        if (relative_dir.empty()) {
+            project_path = name;
+        } else {
+            project_path.reserve(relative_dir.size() + 1 + name.size());
+            project_path.assign(relative_dir).append("/").append(name);
+        }
         const std::filesystem::path absolute_path = absolute_dir / name;
 
-        struct stat metadata {};
+        struct stat metadata{};
         if (lstat(absolute_path.c_str(), &metadata) != 0) {
             result.errors.push_back("failed_to_stat:" + project_path);
             continue;
         }
 
         const bool is_directory = S_ISDIR(metadata.st_mode);
-        if (options.skip_policy != nullptr && options.skip_policy->should_skip_normalized(project_path)) {
+        if (options.skip_policy != nullptr &&
+            options.skip_policy->should_skip_normalized(project_path)) {
             if (is_directory) {
                 ++result.dirs_skipped;
             }
@@ -361,26 +334,20 @@ void enumerate_posix_directory(
         }
 
         EntryRecord record;
-        classification_ns_total += finish_record(
-            record,
-            arena,
-            project_path,
-            name,
-            parent_record_index,
-            is_directory ? EntryKind::Directory : EntryKind::File,
-            hidden
-        );
+        classification_ns_total +=
+            finish_record(record, arena, project_path, name, parent_record_index,
+                          is_directory ? EntryKind::Directory : EntryKind::File, hidden);
         record.size_bytes = is_directory ? 0 : static_cast<int64_t>(metadata.st_size);
-#if defined(__APPLE__)
+#    ifdef __APPLE__
         record.modified_time_ns = timespec_to_ns(metadata.st_mtimespec);
-#else
+#    else
         record.modified_time_ns = timespec_to_ns(metadata.st_mtim);
-#endif
+#    endif
         record.platform_file_id_high = static_cast<uint64_t>(metadata.st_dev);
         record.platform_file_id_low = static_cast<uint64_t>(metadata.st_ino);
         record.flags |= 1u << 1u;
 
-        const int64_t record_index = static_cast<int64_t>(records.size());
+        const auto record_index = static_cast<int64_t>(records.size());
         records.push_back(record);
 
         if (is_directory) {
@@ -390,17 +357,8 @@ void enumerate_posix_directory(
                 continue;
             }
 
-            enumerate_posix_directory(
-                options,
-                absolute_path,
-                project_path,
-                record_index,
-                arena,
-                records,
-                result,
-                true,
-                classification_ns_total
-            );
+            enumerate_posix_directory(options, absolute_path, project_path, record_index, arena,
+                                      records, result, true, classification_ns_total);
         } else {
             ++result.files_seen;
         }
@@ -411,7 +369,8 @@ void enumerate_posix_directory(
 
 #endif
 
-void merge_enumeration_result(EnumerationResult &into, const EnumerationResult &from) {
+void merge_enumeration_result(EnumerationResult& into, const EnumerationResult& from)
+{
     into.completed = into.completed && from.completed;
     into.classification_ms += from.classification_ms;
     into.files_seen += from.files_seen;
@@ -420,38 +379,18 @@ void merge_enumeration_result(EnumerationResult &into, const EnumerationResult &
     into.errors.insert(into.errors.end(), from.errors.begin(), from.errors.end());
 }
 
-EnumerationResult enumerate_serial(
-    const EnumerationOptions &options,
-    PathArena &arena,
-    std::vector<EntryRecord> &records
-) {
+EnumerationResult enumerate_serial(const EnumerationOptions& options, PathArena& arena,
+                                   std::vector<EntryRecord>& records)
+{
     EnumerationResult result;
     int64_t classification_ns_total = 0;
 
-#if defined(_WIN32)
-    enumerate_windows_directory(
-        options,
-        options.root,
-        "",
-        -1,
-        arena,
-        records,
-        result,
-        true,
-        classification_ns_total
-    );
+#ifdef _WIN32
+    enumerate_windows_directory(options, options.root, "", -1, arena, records, result, true,
+                                classification_ns_total);
 #else
-    enumerate_posix_directory(
-        options,
-        options.root,
-        "",
-        -1,
-        arena,
-        records,
-        result,
-        true,
-        classification_ns_total
-    );
+    enumerate_posix_directory(options, options.root, "", -1, arena, records, result, true,
+                              classification_ns_total);
 #endif
 
     result.classification_ms = classification_ns_total / 1'000'000LL;
@@ -460,41 +399,21 @@ EnumerationResult enumerate_serial(
     return result;
 }
 
-EnumerationResult enumerate_parallel(
-    const EnumerationOptions &options,
-    PathArena &arena,
-    std::vector<EntryRecord> &records
-) {
+EnumerationResult enumerate_parallel(const EnumerationOptions& options, PathArena& arena,
+                                     std::vector<EntryRecord>& records)
+{
     EnumerationResult result;
 
     PathArena root_arena;
     std::vector<EntryRecord> root_records;
     int64_t root_classification_ns = 0;
 
-#if defined(_WIN32)
-    enumerate_windows_directory(
-        options,
-        options.root,
-        "",
-        -1,
-        root_arena,
-        root_records,
-        result,
-        false,
-        root_classification_ns
-    );
+#ifdef _WIN32
+    enumerate_windows_directory(options, options.root, "", -1, root_arena, root_records, result,
+                                false, root_classification_ns);
 #else
-    enumerate_posix_directory(
-        options,
-        options.root,
-        "",
-        -1,
-        root_arena,
-        root_records,
-        result,
-        false,
-        root_classification_ns
-    );
+    enumerate_posix_directory(options, options.root, "", -1, root_arena, root_records, result,
+                              false, root_classification_ns);
 #endif
 
     result.classification_ms = root_classification_ns / 1'000'000LL;
@@ -504,7 +423,8 @@ EnumerationResult enumerate_parallel(
         return result;
     }
 
-    struct SubtreeTask {
+    struct SubtreeTask
+    {
         std::filesystem::path absolute_dir;
         std::string relative_dir;
     };
@@ -512,18 +432,17 @@ EnumerationResult enumerate_parallel(
     std::vector<SubtreeTask> tasks;
     tasks.reserve(root_records.size());
 
-    for (const EntryRecord &record : root_records) {
+    for (const EntryRecord& record : root_records) {
         copy_record_into_arena(record, root_arena, arena, records);
 
         if (record.entry_kind != EntryKind::Directory) {
             continue;
         }
 
-        const std::string_view project_path = root_arena.view(record.path_offset, record.path_length);
-        tasks.push_back({
-            options.root / std::filesystem::u8path(std::string(project_path)),
-            std::string(project_path)
-        });
+        const std::string_view project_path =
+            root_arena.view(record.path_offset, record.path_length);
+        tasks.push_back({options.root / std::filesystem::u8path(std::string(project_path)),
+                         std::string(project_path)});
     }
 
     if (tasks.empty()) {
@@ -536,11 +455,12 @@ EnumerationResult enumerate_parallel(
         max_workers = 4;
     }
 
-    const int64_t hardware = std::max<int64_t>(2, static_cast<int64_t>(std::thread::hardware_concurrency()));
+    const int64_t hardware =
+        std::max<int64_t>(2, static_cast<int64_t>(std::thread::hardware_concurrency()));
     const int64_t worker_count = std::max<int64_t>(1, std::min<int64_t>(hardware - 1, max_workers));
 
     if (worker_count <= 1) {
-        for (const SubtreeTask &task : tasks) {
+        for (const SubtreeTask& task : tasks) {
             if (is_cancelled(options)) {
                 result.completed = false;
                 return result;
@@ -551,37 +471,21 @@ EnumerationResult enumerate_parallel(
             EnumerationResult local_result;
             int64_t local_classification_ns = 0;
 
-#if defined(_WIN32)
-            enumerate_windows_directory(
-                options,
-                task.absolute_dir,
-                task.relative_dir,
-                -1,
-                local_arena,
-                local_records,
-                local_result,
-                true,
-                local_classification_ns
-            );
+#ifdef _WIN32
+            enumerate_windows_directory(options, task.absolute_dir, task.relative_dir, -1,
+                                        local_arena, local_records, local_result, true,
+                                        local_classification_ns);
 #else
-            enumerate_posix_directory(
-                options,
-                task.absolute_dir,
-                task.relative_dir,
-                -1,
-                local_arena,
-                local_records,
-                local_result,
-                true,
-                local_classification_ns
-            );
+            enumerate_posix_directory(options, task.absolute_dir, task.relative_dir, -1,
+                                      local_arena, local_records, local_result, true,
+                                      local_classification_ns);
 #endif
 
             local_result.classification_ms = local_classification_ns / 1'000'000LL;
 
             merge_enumeration_result(result, local_result);
 
-            for (const EntryRecord &record : local_records) {
+            for (const EntryRecord& record : local_records) {
                 copy_record_into_arena(record, local_arena, arena, records);
             }
         }
@@ -590,7 +494,7 @@ EnumerationResult enumerate_parallel(
         return result;
     }
 
-    std::atomic_size_t next_task { 0 };
+    std::atomic_size_t next_task{0};
     std::mutex merge_mutex;
     std::vector<std::thread> workers;
     workers.reserve(static_cast<size_t>(worker_count));
@@ -611,37 +515,21 @@ EnumerationResult enumerate_parallel(
                     break;
                 }
 
-                const SubtreeTask &task = tasks[index];
+                const SubtreeTask& task = tasks[index];
 
                 PathArena local_arena;
                 std::vector<EntryRecord> local_records;
                 EnumerationResult local_result;
                 int64_t local_classification_ns = 0;
 
-#if defined(_WIN32)
-                enumerate_windows_directory(
-                    options,
-                    task.absolute_dir,
-                    task.relative_dir,
-                    -1,
-                    local_arena,
-                    local_records,
-                    local_result,
-                    true,
-                    local_classification_ns
-                );
+#ifdef _WIN32
+                enumerate_windows_directory(options, task.absolute_dir, task.relative_dir, -1,
+                                            local_arena, local_records, local_result, true,
+                                            local_classification_ns);
 #else
-                enumerate_posix_directory(
-                    options,
-                    task.absolute_dir,
-                    task.relative_dir,
-                    -1,
-                    local_arena,
-                    local_records,
-                    local_result,
-                    true,
-                    local_classification_ns
-                );
+                enumerate_posix_directory(options, task.absolute_dir, task.relative_dir, -1,
+                                          local_arena, local_records, local_result, true,
+                                          local_classification_ns);
 #endif
 
                 local_result.classification_ms = local_classification_ns / 1'000'000LL;
@@ -650,17 +538,17 @@ EnumerationResult enumerate_parallel(
                 local_outputs.emplace_back(std::move(local_arena), std::move(local_records));
             }
 
-            std::lock_guard<std::mutex> lock(merge_mutex);
+            std::scoped_lock lock(merge_mutex);
             merge_enumeration_result(result, local_totals);
-            for (auto &output : local_outputs) {
-                for (const EntryRecord &record : output.second) {
+            for (auto& output : local_outputs) {
+                for (const EntryRecord& record : output.second) {
                     copy_record_into_arena(record, output.first, arena, records);
                 }
             }
         });
     }
 
-    for (std::thread &worker : workers) {
+    for (std::thread& worker : workers) {
         if (worker.joinable()) {
             worker.join();
         }
@@ -677,16 +565,15 @@ EnumerationResult enumerate_parallel(
 
 } // namespace
 
-EnumerationResult NativeDirectoryEnumerator::enumerate(
-    const EnumerationOptions &options,
-    PathArena &arena,
-    std::vector<EntryRecord> &records
-) const {
+EnumerationResult NativeDirectoryEnumerator::enumerate(const EnumerationOptions& options,
+                                                       PathArena& arena,
+                                                       std::vector<EntryRecord>& records) const
+{
     EnumerationResult result;
 
     if (options.root.empty()) {
         result.completed = false;
-        result.errors.push_back("empty_root");
+        result.errors.emplace_back("empty_root");
         return result;
     }
 

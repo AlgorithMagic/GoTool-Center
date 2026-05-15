@@ -6,7 +6,8 @@ namespace gotool::project_scanner {
 
 namespace {
 
-std::string backend_name() {
+std::string backend_name()
+{
 #if defined(_WIN32)
     return "windows_read_directory_changesw";
 #elif defined(__APPLE__)
@@ -18,14 +19,16 @@ std::string backend_name() {
 #endif
 }
 
-bool backend_is_supported() {
+bool backend_is_supported()
+{
     // Platform backends are scaffolded but intentionally not enabled yet.
     return false;
 }
 
 } // namespace
 
-bool FileWatcher::start(const std::filesystem::path &root_path) {
+bool FileWatcher::start(const std::filesystem::path& root_path)
+{
     std::lock_guard<std::mutex> lock(mutex_);
 
     root_path_ = root_path;
@@ -46,29 +49,34 @@ bool FileWatcher::start(const std::filesystem::path &root_path) {
     return true;
 }
 
-void FileWatcher::stop() {
+void FileWatcher::stop()
+{
     std::lock_guard<std::mutex> lock(mutex_);
     running_ = false;
 }
 
-std::vector<FileWatcherEvent> FileWatcher::drain_events() {
+std::vector<FileWatcherEvent> FileWatcher::drain_events()
+{
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<FileWatcherEvent> drained;
     drained.swap(pending_events_);
     return drained;
 }
 
-bool FileWatcher::is_supported() const {
+bool FileWatcher::is_supported() const
+{
     std::lock_guard<std::mutex> lock(mutex_);
     return supported_;
 }
 
-bool FileWatcher::requires_full_rescan() const {
+bool FileWatcher::requires_full_rescan() const
+{
     std::lock_guard<std::mutex> lock(mutex_);
     return requires_full_rescan_;
 }
 
-FileWatcherStatus FileWatcher::get_status() const {
+FileWatcherStatus FileWatcher::get_status() const
+{
     std::lock_guard<std::mutex> lock(mutex_);
 
     FileWatcherStatus status;

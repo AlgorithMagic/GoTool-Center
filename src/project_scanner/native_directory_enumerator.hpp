@@ -2,26 +2,29 @@
 
 #pragma once
 
-#include "project_scanner/native_scan_rules.hpp"
-
 #include <atomic>
 #include <filesystem>
 #include <string>
 #include <vector>
 
+#include "project_scanner/native_scan_rules.hpp"
+
+
 namespace gotool::project_scanner {
 
-struct EnumerationOptions {
+struct EnumerationOptions
+{
     std::filesystem::path root;
     bool include_hidden = true;
     bool enable_parallel_traversal = false;
     bool deterministic_record_order = true;
     int64_t max_parallel_workers = 0;
-    const SkipPolicy *skip_policy = nullptr;
-    const std::atomic_bool *cancel_requested = nullptr;
+    const SkipPolicy* skip_policy = nullptr;
+    const std::atomic_bool* cancel_requested = nullptr;
 };
 
-struct EnumerationResult {
+struct EnumerationResult
+{
     bool completed = true;
     int64_t classification_ms = 0;
     int64_t files_seen = 0;
@@ -30,13 +33,11 @@ struct EnumerationResult {
     std::vector<std::string> errors;
 };
 
-class NativeDirectoryEnumerator {
+class NativeDirectoryEnumerator
+{
 public:
-    EnumerationResult enumerate(
-        const EnumerationOptions &options,
-        PathArena &arena,
-        std::vector<EntryRecord> &records
-    ) const;
+    EnumerationResult enumerate(const EnumerationOptions& options, PathArena& arena,
+                                std::vector<EntryRecord>& records) const;
 };
 
 } // namespace gotool::project_scanner

@@ -10,13 +10,15 @@
 
 namespace gotool::project_scanner {
 
-struct FileWatcherEvent {
+struct FileWatcherEvent
+{
     std::string project_relative_path;
     bool removed = false;
     bool is_directory = false;
 };
 
-struct FileWatcherStatus {
+struct FileWatcherStatus
+{
     bool running = false;
     bool supported = false;
     bool requires_full_rescan = false;
@@ -25,9 +27,10 @@ struct FileWatcherStatus {
     int64_t pending_events = 0;
 };
 
-class FileWatcher {
+class FileWatcher
+{
 public:
-    bool start(const std::filesystem::path &root_path);
+    bool start(const std::filesystem::path& root_path);
     void stop();
     std::vector<FileWatcherEvent> drain_events();
 
