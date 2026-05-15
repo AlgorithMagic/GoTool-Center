@@ -5,9 +5,13 @@ on:
 
   push:
     branches: [main]
+    paths-ignore:
+      - "third-party/**"
 
   pull_request:
     branches: [main]
+    paths-ignore:
+      - "third-party/**"
 
   schedule:
     # Runs every Saturday at 19:45 UTC on the default branch.
@@ -114,6 +118,7 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
+          config-file: ./.github/codeql/codeql-config.yml
           queries: security-extended,security-and-quality
 
       - name: Build C/C++ for CodeQL
